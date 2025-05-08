@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  redgem_bruter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: redgem_bruter
+    volumes:
+      - ./output:/app/output  # Mount output directory for scan results
+    environment:
+      - TZ=UTC
+    # Add any additional environment variables your application needs
+    # - REDGEM_OPTION=value
+    cap_add:
+      - NET_ADMIN  # Required for network scanning
+    security_opt:
+      - seccomp:unconfined  # Required for nmap functionality
+    restart: unless-stopped
+    # Example command (modify according to your needs):
+    # command: ["-t", "192.168.1.0/24", "-p", "22,80,443", "-o", "output/scan.json", "-f", "json"] 
