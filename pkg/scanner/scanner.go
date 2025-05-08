@@ -86,45 +86,62 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 
 	result.Open = true
 
-	// Try to identify the service
-	for serviceName, service := range s.Services {
-		for _, servicePort := range service.Ports {
-			if port == servicePort {
+	// First try to get the banner to identify the service
+	banner, version, err := nmapScanner.GetBanner()
+	if err == nil && banner != "" {
+		result.Banner = banner
+		result.Version = version
+
+		// Try to identify service from banner
+		for serviceName, service := range s.Services {
+			if strings.Contains(strings.ToLower(banner), strings.ToLower(service.Name)) {
 				result.Service = serviceName
-
-				// Get the appropriate service action
-				serviceAction := actions.GetServiceAction(serviceName)
-
-				// Set host and port
-				serviceAction.SetHost(s.Target)
-				serviceAction.SetPort(port)
-
-				// Check authentication
-				requiresAuth, info, err := serviceAction.CheckAuth()
-				if err != nil {
-					result.Error = err
-				}
-				result.Auth = requiresAuth
-				result.Info = info
-
-				// Check for banner and version
-				if baseAction, ok := serviceAction.(*actions.BaseAction); ok {
-					banner, version, err := baseAction.GetBanner()
-					if err == nil {
-						result.Banner = banner
-						result.Version = version
-					}
-				}
-
-				// Check for vulnerabilities
-				if !requiresAuth {
-					result.Vulnerable = true
-					result.VulnDescription = "Service does not require authentication"
-				}
-
 				break
 			}
 		}
+	}
+
+	// If service not identified from banner, try default port mapping
+	if result.Service == "" {
+		for serviceName, service := range s.Services {
+			for _, servicePort := range service.Ports {
+				if port == servicePort {
+					result.Service = serviceName
+					break
+				}
+			}
+			if result.Service != "" {
+				break
+			}
+		}
+	}
+
+	// If we have identified a service, perform service-specific checks
+	if result.Service != "" {
+		// Get the appropriate service action
+		serviceAction := actions.GetServiceAction(result.Service)
+
+		// Set host and port
+		serviceAction.SetHost(s.Target)
+		serviceAction.SetPort(port)
+
+		// Check authentication
+		requiresAuth, info, err := serviceAction.CheckAuth()
+		if err != nil {
+			result.Error = err
+		}
+		result.Auth = requiresAuth
+		result.Info = info
+
+		// Check for vulnerabilities
+		if !requiresAuth {
+			result.Vulnerable = true
+			result.VulnDescription = "Service does not require authentication"
+		}
+	} else {
+		// If we couldn't identify the service, mark it as unknown
+		result.Service = "unknown"
+		result.Info = "Service could not be identified"
 	}
 
 	return result, nil
