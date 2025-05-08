@@ -10,14 +10,23 @@ import (
 
 // ScanResult represents the result of a service scan
 type ScanResult struct {
-	IP       string
-	Service  string
-	Port     int
-	Protocol string
-	Open     bool
-	Auth     bool
-	Error    error
-	Info     string
+	IP              string
+	Service         string
+	Port            int
+	Protocol        string
+	Open            bool
+	Auth            bool
+	Error           error
+	Info            string
+	Version         string
+	Banner          string
+	Vulnerable      bool
+	VulnDescription string
+	DefaultCreds    bool
+	DefaultUser     string
+	DefaultPass     string
+	GuestAccess     bool
+	LastChecked     time.Time
 }
 
 // Scanner represents the main scanner structure
@@ -53,22 +62,26 @@ func NewScanner(target string, ports []int, attack bool, outputFile, format stri
 
 // ScanPort performs a port scan on the specified port
 func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
-	address := fmt.Sprintf("%s:%d", s.Target, port)
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-
 	result := &ScanResult{
-		IP:       s.IP,
-		Port:     port,
-		Protocol: "tcp",
-		Open:     false,
-		Auth:     false,
+		IP:          s.IP,
+		Port:        port,
+		Protocol:    "tcp",
+		Open:        false,
+		Auth:        false,
+		LastChecked: time.Now(),
 	}
 
+	// Create nmap scanner
+	nmapScanner := actions.NewBaseAction()
+	open, err := nmapScanner.CheckPort(s.Target, port)
 	if err != nil {
 		result.Error = err
 		return result, nil
 	}
-	defer conn.Close()
+
+	if !open {
+		return result, nil
+	}
 
 	result.Open = true
 
@@ -92,6 +105,21 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 				}
 				result.Auth = requiresAuth
 				result.Info = info
+
+				// Check for banner and version
+				if baseAction, ok := serviceAction.(*actions.BaseAction); ok {
+					banner, version, err := baseAction.GetBanner()
+					if err == nil {
+						result.Banner = banner
+						result.Version = version
+					}
+				}
+
+				// Check for vulnerabilities
+				if !requiresAuth {
+					result.Vulnerable = true
+					result.VulnDescription = "Service does not require authentication"
+				}
 
 				break
 			}
@@ -158,13 +186,47 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 func (s *Scanner) FormatResult(result *ScanResult) string {
 	switch s.Format {
 	case "json":
-		return fmt.Sprintf(`{"ip":"%s","service":"%s","port":%d,"protocol":"%s","open":%v,"auth":%v,"info":"%s"}`,
-			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Info)
+		return fmt.Sprintf(`{"ip":"%s","service":"%s","port":%d,"protocol":"%s","open":%v,"auth":%v,"vulnerable":%v,"vuln_description":"%s","default_creds":%v,"default_user":"%s","default_pass":"%s","guest_access":%v,"version":"%s","banner":"%s","info":"%s","last_checked":"%s"}`,
+			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Vulnerable, result.VulnDescription, result.DefaultCreds, result.DefaultUser, result.DefaultPass, result.GuestAccess, result.Version, result.Banner, result.Info, result.LastChecked.Format(time.RFC3339))
 	case "csv":
-		return fmt.Sprintf("%s,%s,%d,%s,%v,%v,%s",
-			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Info)
+		return fmt.Sprintf("%s,%s,%d,%s,%v,%v,%v,%s,%v,%s,%s,%v,%s,%s,%s,%s",
+			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Vulnerable, result.VulnDescription, result.DefaultCreds, result.DefaultUser, result.DefaultPass, result.GuestAccess, result.Version, result.Banner, result.Info, result.LastChecked.Format(time.RFC3339))
 	default:
-		return fmt.Sprintf("IP: %s, Service: %s, Port: %d, Protocol: %s, Open: %v, Auth: %v, Info: %s",
-			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Info)
+		output := fmt.Sprintf("IP: %s\n", result.IP)
+		output += fmt.Sprintf("Service: %s\n", result.Service)
+		output += fmt.Sprintf("Port: %d\n", result.Port)
+		output += fmt.Sprintf("Protocol: %s\n", result.Protocol)
+		output += fmt.Sprintf("Status: %v\n", result.Open)
+		output += fmt.Sprintf("Auth Required: %v\n", result.Auth)
+
+		if result.Vulnerable {
+			output += fmt.Sprintf("VULNERABLE: %s\n", result.VulnDescription)
+		}
+
+		if result.DefaultCreds {
+			output += fmt.Sprintf("Default Credentials Found:\n")
+			output += fmt.Sprintf("  Username: %s\n", result.DefaultUser)
+			output += fmt.Sprintf("  Password: %s\n", result.DefaultPass)
+		}
+
+		if result.GuestAccess {
+			output += fmt.Sprintf("Guest Access Available\n")
+		}
+
+		if result.Version != "" {
+			output += fmt.Sprintf("Version: %s\n", result.Version)
+		}
+
+		if result.Banner != "" {
+			output += fmt.Sprintf("Banner: %s\n", result.Banner)
+		}
+
+		if result.Info != "" {
+			output += fmt.Sprintf("Additional Info: %s\n", result.Info)
+		}
+
+		output += fmt.Sprintf("Last Checked: %s\n", result.LastChecked.Format(time.RFC3339))
+
+		return output
 	}
 }
