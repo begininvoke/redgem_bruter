@@ -9,21 +9,19 @@ import (
 	"time"
 )
 
-// FTPAction implements FTP service scanning
-type FTPAction struct {
+// TelnetAction implements Telnet service scanning
+type TelnetAction struct {
 	BaseAction
 }
 
-// NewFTPAction creates a new FTP action
-func NewFTPAction() *FTPAction {
-	return &FTPAction{
-		BaseAction: *NewBaseAction(),
-	}
+// NewTelnetAction creates a new Telnet action
+func NewTelnetAction() *TelnetAction {
+	return &TelnetAction{}
 }
 
-// CheckAuth checks if FTP requires authentication
-func (f *FTPAction) CheckAuth() (bool, string, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", f.Host, f.Port), 5*time.Second)
+// CheckAuth checks if Telnet requires authentication
+func (t *TelnetAction) CheckAuth() (bool, string, error) {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", t.Host, t.Port), 5*time.Second)
 	if err != nil {
 		return false, "", err
 	}
@@ -35,37 +33,25 @@ func (f *FTPAction) CheckAuth() (bool, string, error) {
 		return false, "", err
 	}
 
-	// Try anonymous login
-	fmt.Fprintf(conn, "USER anonymous\r\n")
-	response, err = reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	// Check if login prompt is present
+	if strings.Contains(strings.ToLower(response), "login") {
+		return true, "Telnet requires authentication", nil
 	}
 
-	fmt.Fprintf(conn, "PASS anonymous\r\n")
-	response, err = reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
-	}
-
-	if strings.Contains(response, "230") {
-		return false, "FTP allows anonymous access", nil
-	}
-
-	return true, "FTP requires authentication", nil
+	return false, "Telnet does not require authentication", nil
 }
 
-// BruteForce attempts to brute force FTP credentials
-func (f *FTPAction) BruteForce() (bool, string, error) {
+// BruteForce attempts to brute force Telnet credentials
+func (t *TelnetAction) BruteForce() (bool, string, error) {
 	// Try to read from service-specific wordlist first
-	credentials, err := f.ReadServiceWordlist("ftp")
+	credentials, err := t.ReadServiceWordlist("telnet")
 	if err != nil {
 		// Fall back to default credentials if wordlist is not available
 		credentials = []string{
-			"anonymous:anonymous",
-			"anonymous:ftp",
-			"anonymous:anonymous@",
-			"anonymous:ftp@",
+			"root:root",
+			"admin:admin",
+			"root:password",
+			"admin:password",
 		}
 	}
 
@@ -90,7 +76,7 @@ func (f *FTPAction) BruteForce() (bool, string, error) {
 
 			username, password := parts[0], parts[1]
 
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", f.Host, f.Port), 5*time.Second)
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", t.Host, t.Port), 5*time.Second)
 			if err != nil {
 				return
 			}
@@ -103,24 +89,26 @@ func (f *FTPAction) BruteForce() (bool, string, error) {
 			}
 
 			// Send username
-			fmt.Fprintf(conn, "USER %s\r\n", username)
+			fmt.Fprintf(conn, "%s\r\n", username)
 			response, err := reader.ReadString('\n')
 			if err != nil {
 				return
 			}
 
-			if !strings.HasPrefix(response, "331") {
+			// Check for password prompt
+			if !strings.Contains(strings.ToLower(response), "password") {
 				return
 			}
 
 			// Send password
-			fmt.Fprintf(conn, "PASS %s\r\n", password)
+			fmt.Fprintf(conn, "%s\r\n", password)
 			response, err = reader.ReadString('\n')
 			if err != nil {
 				return
 			}
 
-			if strings.HasPrefix(response, "230") {
+			// Check for successful login
+			if !strings.Contains(strings.ToLower(response), "incorrect") && !strings.Contains(strings.ToLower(response), "invalid") {
 				mu.Lock()
 				success = true
 				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s", username, password)

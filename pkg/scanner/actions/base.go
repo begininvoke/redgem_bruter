@@ -1,7 +1,11 @@
 package actions
 
 import (
+	"bufio"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -10,14 +14,19 @@ import (
 
 // ServiceAction defines the interface for service-specific actions
 type ServiceAction interface {
-	CheckAuth(host string, port int) (bool, string, error)
-	BruteForce(host string, port int, wordlist string) (bool, string, error)
+	CheckAuth() (bool, string, error)
+	BruteForce() (bool, string, error)
+	GetBanner() (string, string, error)
+	SetHost(host string)
+	SetPort(port int)
 }
 
 // BaseAction provides common functionality for all service actions
 type BaseAction struct {
 	Timeout     time.Duration
 	nmapScanner *nmap.NmapScanner
+	Host        string
+	Port        int
 }
 
 // NewBaseAction creates a new BaseAction with default timeout
@@ -26,6 +35,16 @@ func NewBaseAction() *BaseAction {
 		Timeout:     5 * time.Second,
 		nmapScanner: nmap.NewNmapScanner(5 * time.Second),
 	}
+}
+
+// SetHost sets the host for the action
+func (b *BaseAction) SetHost(host string) {
+	b.Host = host
+}
+
+// SetPort sets the port for the action
+func (b *BaseAction) SetPort(port int) {
+	b.Port = port
 }
 
 // CheckPort checks if a port is open on the specified host
@@ -55,10 +74,85 @@ func (b *BaseAction) RunNmapScript(host string, port int, script string) (string
 	return output, nil
 }
 
+// GetBanner attempts to get the service banner and version
+func (b *BaseAction) GetBanner() (string, string, error) {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", b.Host, b.Port), 5*time.Second)
+	if err != nil {
+		return "", "", err
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	reader := bufio.NewReader(conn)
+	banner, err := reader.ReadString('\n')
+	if err != nil {
+		return "", "", err
+	}
+
+	// Try to extract version based on service type
+	version := extractVersion(banner)
+	return strings.TrimSpace(banner), version, nil
+}
+
+// ReadServiceWordlist reads credentials from a service-specific wordlist
+func (b *BaseAction) ReadServiceWordlist(service string) ([]string, error) {
+	wordlistPath := filepath.Join("pkg", "scanner", "wordlists", service+".txt")
+	file, err := os.Open(wordlistPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open wordlist file: %v", err)
+	}
+	defer file.Close()
+
+	var credentials []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			credentials = append(credentials, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading wordlist: %v", err)
+	}
+
+	return credentials, nil
+}
+
+// extractVersion attempts to extract version information from a banner
+func extractVersion(banner string) string {
+	// Common version patterns
+	patterns := []struct {
+		service string
+		pattern string
+	}{
+		{"SSH", "SSH-\\d+\\.\\d+"},
+		{"FTP", "vsFTPd \\d+\\.\\d+"},
+		{"HTTP", "Server: [^\\r\\n]+"},
+		{"MySQL", "\\d+\\.\\d+\\.\\d+"},
+		{"PostgreSQL", "\\d+\\.\\d+"},
+		{"Redis", "redis_version:\\d+\\.\\d+"},
+		{"MongoDB", "\\d+\\.\\d+\\.\\d+"},
+	}
+
+	for _, p := range patterns {
+		if strings.Contains(banner, p.service) {
+			// Extract version using pattern
+			// This is a simplified version - you might want to use regex for more precise matching
+			parts := strings.Split(banner, p.service)
+			if len(parts) > 1 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	return ""
+}
+
 // CheckAuth is the default implementation for checking authentication
-func (b *BaseAction) CheckAuth(host string, port int) (bool, string, error) {
+func (b *BaseAction) CheckAuth() (bool, string, error) {
 	// First check if port is open
-	open, err := b.CheckPort(host, port)
+	open, err := b.CheckPort(b.Host, b.Port)
 	if err != nil {
 		return false, "", err
 	}
@@ -67,7 +161,7 @@ func (b *BaseAction) CheckAuth(host string, port int) (bool, string, error) {
 	}
 
 	// Run a generic auth detection script
-	output, err := b.RunNmapScript(host, port, "auth-finder")
+	output, err := b.RunNmapScript(b.Host, b.Port, "auth-finder")
 	if err != nil {
 		return false, "", err
 	}
@@ -82,6 +176,6 @@ func (b *BaseAction) CheckAuth(host string, port int) (bool, string, error) {
 }
 
 // BruteForce is the default implementation for brute force attempts
-func (b *BaseAction) BruteForce(host string, port int, wordlist string) (bool, string, error) {
+func (b *BaseAction) BruteForce() (bool, string, error) {
 	return false, "Brute force not implemented for this service", nil
 }

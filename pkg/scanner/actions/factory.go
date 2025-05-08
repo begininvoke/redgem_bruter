@@ -17,6 +17,16 @@ func GetServiceAction(service string) ServiceAction {
 		return NewMySQLAction()
 	case "postgres":
 		return NewPostgresAction()
+	case "ftp":
+		return NewFTPAction()
+	case "telnet":
+		return NewTelnetAction()
+	case "smtp":
+		return NewSMTPAction()
+	case "ldap":
+		return NewLDAPAction()
+	case "rdp":
+		return NewRDPAction()
 	default:
 		// Default action for unknown services
 		return NewBaseAction()

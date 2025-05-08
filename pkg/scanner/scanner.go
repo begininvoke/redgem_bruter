@@ -25,14 +25,14 @@ type Scanner struct {
 	Target     string
 	Ports      []int
 	Services   map[string]services.Service
-	Wordlist   string
+	Attack     bool
 	OutputFile string
 	Format     string
 	IP         string
 }
 
 // NewScanner creates a new scanner instance
-func NewScanner(target string, ports []int, wordlist, outputFile, format string) *Scanner {
+func NewScanner(target string, ports []int, attack bool, outputFile, format string) *Scanner {
 	// Resolve IP address
 	ip, err := net.ResolveIPAddr("ip", target)
 	ipStr := ""
@@ -44,7 +44,7 @@ func NewScanner(target string, ports []int, wordlist, outputFile, format string)
 		Target:     target,
 		Ports:      ports,
 		Services:   services.GetAllServices(),
-		Wordlist:   wordlist,
+		Attack:     attack,
 		OutputFile: outputFile,
 		Format:     format,
 		IP:         ipStr,
@@ -81,24 +81,17 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 				// Get the appropriate service action
 				serviceAction := actions.GetServiceAction(serviceName)
 
+				// Set host and port
+				serviceAction.SetHost(s.Target)
+				serviceAction.SetPort(port)
+
 				// Check authentication
-				requiresAuth, info, err := serviceAction.CheckAuth(s.Target, port)
+				requiresAuth, info, err := serviceAction.CheckAuth()
 				if err != nil {
 					result.Error = err
 				}
 				result.Auth = requiresAuth
 				result.Info = info
-
-				// If wordlist is provided, attempt brute force
-				if s.Wordlist != "" {
-					success, bruteInfo, err := serviceAction.BruteForce(s.Target, port, s.Wordlist)
-					if err != nil {
-						result.Error = err
-					}
-					if success {
-						result.Info += "\nBrute force successful: " + bruteInfo
-					}
-				}
 
 				break
 			}
@@ -106,6 +99,27 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 	}
 
 	return result, nil
+}
+
+// AttackService attempts to brute force a service
+func (s *Scanner) AttackService(result *ScanResult) error {
+	if !result.Open || !result.Auth {
+		return nil
+	}
+
+	serviceAction := actions.GetServiceAction(result.Service)
+	serviceAction.SetHost(s.Target)
+	serviceAction.SetPort(result.Port)
+
+	success, bruteInfo, err := serviceAction.BruteForce()
+	if err != nil {
+		return err
+	}
+	if success {
+		result.Info += "\nBrute force successful: " + bruteInfo
+	}
+
+	return nil
 }
 
 // Scan performs a scan of all specified ports
@@ -119,12 +133,22 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 		}
 	}
 
+	// First, scan all ports
 	for _, port := range s.Ports {
 		result, err := s.ScanPort(port)
 		if err != nil {
 			return nil, err
 		}
 		results = append(results, result)
+	}
+
+	// Then, if attack mode is enabled, attempt brute force on services that require auth
+	if s.Attack {
+		for _, result := range results {
+			if err := s.AttackService(result); err != nil {
+				fmt.Printf("Error attacking %s on port %d: %v\n", result.Service, result.Port, err)
+			}
+		}
 	}
 
 	return results, nil

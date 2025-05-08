@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"redgem_bruter/pkg/scanner"
+
 	"strings"
 )
 
@@ -14,7 +15,7 @@ func main() {
 	ports := flag.String("port", "", "Comma-separated list of ports to scan (optional)")
 	outputFile := flag.String("o", "", "Output file for results (optional)")
 	format := flag.String("f", "text", "Output format (text, json, or csv)")
-	wordlist := flag.String("w", "", "Wordlist file for brute force attempts (optional)")
+	attack := flag.Bool("a", false, "Enable brute force attack mode")
 
 	flag.Parse()
 
@@ -28,10 +29,32 @@ func main() {
 	// Parse ports
 	var portList []int
 	if *ports != "" {
+		// Handle port keyword format
+		if strings.Contains(*ports, "port") {
+			parts := strings.Split(*ports, "port")
+			if len(parts) > 1 {
+				*ports = strings.TrimSpace(parts[1])
+			}
+		}
+
+		// Handle port in IP address format
+		if strings.Contains(*target, ":") {
+			parts := strings.Split(*target, ":")
+			if len(parts) > 1 {
+				*target = parts[0]
+				var port int
+				fmt.Sscanf(parts[1], "%d", &port)
+				if port > 0 && port < 65536 {
+					portList = append(portList, port)
+				}
+			}
+		}
+
+		// Parse comma-separated ports
 		portStrings := strings.Split(*ports, ",")
 		for _, portStr := range portStrings {
 			var port int
-			fmt.Sscanf(portStr, "%d", &port)
+			fmt.Sscanf(strings.TrimSpace(portStr), "%d", &port)
 			if port > 0 && port < 65536 {
 				portList = append(portList, port)
 			}
@@ -39,14 +62,17 @@ func main() {
 	}
 
 	// Create scanner instance
-	s := scanner.NewScanner(*target, portList, *wordlist, *outputFile, *format)
+	s := scanner.NewScanner(*target, portList, *attack, *outputFile, *format)
 
 	// Print scan information
 	fmt.Printf("Starting scan of %s (%s)\n", *target, s.IP)
 	if len(portList) > 0 {
 		fmt.Printf("Scanning ports: %v\n", portList)
 	} else {
-		fmt.Println("Scanning all known service ports")
+		fmt.Println("No specific ports provided. Scanning all known service ports:")
+		for serviceName, service := range s.Services {
+			fmt.Printf("- %s (%s): %v\n", serviceName, service.Description, service.Ports)
+		}
 	}
 
 	// Perform scan
