@@ -197,5 +197,11 @@ func GetAllServices() map[string]Service {
 			Protocol:    "tcp",
 			Description: "Netdata Monitoring",
 		},
+		"squid": {
+			Name:        "Squid",
+			Ports:       []int{3128},
+			Protocol:    "tcp",
+			Description: "Squid Proxy Server",
+		},
 	}
 }

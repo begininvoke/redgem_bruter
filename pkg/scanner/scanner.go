@@ -5,6 +5,7 @@ import (
 	"net"
 	"redgem_bruter/pkg/scanner/actions"
 	"redgem_bruter/pkg/services"
+	"strings"
 	"time"
 )
 
@@ -189,8 +190,33 @@ func (s *Scanner) FormatResult(result *ScanResult) string {
 		return fmt.Sprintf(`{"ip":"%s","service":"%s","port":%d,"protocol":"%s","open":%v,"auth":%v,"vulnerable":%v,"vuln_description":"%s","default_creds":%v,"default_user":"%s","default_pass":"%s","guest_access":%v,"version":"%s","banner":"%s","info":"%s","last_checked":"%s"}`,
 			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Vulnerable, result.VulnDescription, result.DefaultCreds, result.DefaultUser, result.DefaultPass, result.GuestAccess, result.Version, result.Banner, result.Info, result.LastChecked.Format(time.RFC3339))
 	case "csv":
-		return fmt.Sprintf("%s,%s,%d,%s,%v,%v,%v,%s,%v,%s,%s,%v,%s,%s,%s,%s",
-			result.IP, result.Service, result.Port, result.Protocol, result.Open, result.Auth, result.Vulnerable, result.VulnDescription, result.DefaultCreds, result.DefaultUser, result.DefaultPass, result.GuestAccess, result.Version, result.Banner, result.Info, result.LastChecked.Format(time.RFC3339))
+		// Helper function to escape CSV fields
+		escapeCSV := func(s string) string {
+			if strings.ContainsAny(s, ",\"\n\r") {
+				return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+			}
+			return s
+		}
+
+		fields := []string{
+			escapeCSV(result.IP),
+			escapeCSV(result.Service),
+			fmt.Sprintf("%d", result.Port),
+			escapeCSV(result.Protocol),
+			fmt.Sprintf("%v", result.Open),
+			fmt.Sprintf("%v", result.Auth),
+			fmt.Sprintf("%v", result.Vulnerable),
+			escapeCSV(result.VulnDescription),
+			fmt.Sprintf("%v", result.DefaultCreds),
+			escapeCSV(result.DefaultUser),
+			escapeCSV(result.DefaultPass),
+			fmt.Sprintf("%v", result.GuestAccess),
+			escapeCSV(result.Version),
+			escapeCSV(result.Banner),
+			escapeCSV(result.Info),
+			result.LastChecked.Format(time.RFC3339),
+		}
+		return strings.Join(fields, ",")
 	default:
 		output := fmt.Sprintf("IP: %s\n", result.IP)
 		output += fmt.Sprintf("Service: %s\n", result.Service)

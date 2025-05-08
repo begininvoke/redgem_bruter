@@ -22,7 +22,7 @@ go get github.com/yourusername/redgem_bruter
 
 ## Requirements
 
-- Go 1.16 or higher
+- Go 1.23.0 or higher
 - Nmap (for advanced service detection)
 
 ## Usage
@@ -73,6 +73,7 @@ The tool supports scanning for various services including:
 - MongoDB
 - Redis
 - Elasticsearch
+- LDAP
 - And many more...
 
 For a complete list of supported services and their default ports, see the services package.
@@ -116,6 +117,11 @@ Each service has its own specific action implementation:
 - Checks for authentication requirements
 - Supports brute force attempts
 
+### LDAP
+- Uses `ldap-brute` Nmap script
+- Checks for authentication requirements
+- Supports brute force attempts
+
 ## Output Formats
 
 1. Text (default):
@@ -125,12 +131,32 @@ IP: 192.168.1.1, Service: http, Port: 80, Protocol: tcp, Open: true, Auth: false
 
 2. JSON:
 ```json
-{"ip":"192.168.1.1","service":"http","port":80,"protocol":"tcp","open":true,"auth":false,"info":"[Nmap scan results]"}
+{
+    "ip": "192.168.1.1",
+    "service": "http",
+    "port": 80,
+    "protocol": "tcp",
+    "open": true,
+    "auth": false,
+    "info": "[Nmap scan results]"
+}
 ```
 
 3. CSV:
 ```
 192.168.1.1,http,80,tcp,true,false,[Nmap scan results]
+```
+
+## Project Structure
+
+```
+.
+├── cmd/            # Command-line interface
+├── pkg/            # Core packages
+├── wordlists/      # Default wordlists
+├── go.mod          # Go module file
+├── go.sum          # Go module checksums
+└── README.md       # This file
 ```
 
 ## Contributing

@@ -98,7 +98,7 @@ func main() {
 
 	// Write header for CSV format
 	if *format == "csv" {
-		fmt.Fprintln(output, "IP,Service,Port,Protocol,Open,Auth,Info")
+		fmt.Fprintln(output, "IP,Service,Port,Protocol,Open,Auth,Vulnerable,VulnDescription,DefaultCreds,DefaultUser,DefaultPass,GuestAccess,Version,Banner,Info,LastChecked")
 	}
 
 	// Write results
