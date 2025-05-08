@@ -1,18 +1,122 @@
 # RedGem Bruter
 
-A service detection and brute force checking tool written in Go. This tool helps identify open services and check for authentication requirements on target systems.
+A powerful and comprehensive service detection and authentication testing tool written in Go. This tool helps security professionals and system administrators identify open services, check authentication requirements, and test for common vulnerabilities across a wide range of network services.
 
-## Features
+## Key Features
 
-- Service detection on common ports
-- IP address resolution and display
-- Service-specific actions for each supported service
-- Nmap script integration for service identification
-- Authentication detection for common services
-- Support for multiple output formats (text, JSON, CSV)
-- Configurable port scanning
-- Wordlist support for brute force attempts
-- Comprehensive service list with default ports
+### Service Detection
+- Comprehensive service detection across 30+ common network services
+- Intelligent port scanning with service fingerprinting
+- Nmap script integration for advanced service identification
+- Support for both TCP and UDP services
+- Automatic service version detection
+
+### Authentication Testing
+- Authentication requirement detection for all supported services
+- Support for multiple authentication methods:
+  - Basic/Digest HTTP authentication
+  - NTLM authentication
+  - Database authentication
+  - SSH key-based authentication
+  - Proxy authentication
+  - Custom authentication schemes
+
+### Brute Force Capabilities
+- Service-specific brute force attempts
+- Comprehensive wordlists for each service type
+- Support for common credential patterns
+- Customizable brute force strategies
+- Rate limiting and timeout controls
+
+### Supported Services
+The tool supports a wide range of services including:
+
+#### Database Services
+- MySQL (Port 3306)
+- PostgreSQL (Port 5432)
+- MongoDB (Port 27017)
+- MSSQL (Port 1433)
+- Redis (Port 6379)
+- CouchDB (Port 5984)
+- DB2 (Port 50000)
+
+#### Web Services
+- HTTP/HTTPS (Ports 80/443)
+- Jenkins (Port 8080)
+- Kibana (Port 5601)
+- Grafana (Port 3000)
+- Netdata (Port 19999)
+- TeamCity (Port 8111)
+
+#### Messaging & Queue Services
+- RabbitMQ (Ports 5672, 15672)
+- MQTT (Ports 1883, 8883)
+- NATS (Port 4222)
+
+#### Remote Access Services
+- SSH (Port 22)
+- RDP (Port 3389)
+- VNC (Ports 5900-5902)
+- WinRM (Ports 5985, 5986)
+- Telnet (Port 23)
+
+#### File & Storage Services
+- FTP (Port 21)
+- SMB (Ports 445, 139)
+- AFP (Port 548)
+
+#### Proxy & Security Services
+- Squid Proxy (Port 3128)
+- LDAP (Ports 389, 636)
+- Kerberos (Port 88)
+
+#### Monitoring & Management
+- SNMP (Ports 161, 162)
+- Docker API (Ports 2375, 2376)
+
+### Output Formats
+- Text output for human readability
+- JSON output for programmatic processing
+- CSV output for spreadsheet analysis
+- Detailed service information including:
+  - Authentication status
+  - Service version
+  - Banner information
+  - Vulnerability indicators
+  - Default credentials status
+
+### Security Features
+- Rate limiting to prevent service disruption
+- Configurable timeouts
+- Safe brute force attempts
+- Error handling and logging
+- Support for proxy connections
+
+## Use Cases
+
+1. **Security Auditing**
+   - Identify open services
+   - Check for default credentials
+   - Test authentication requirements
+   - Detect common vulnerabilities
+
+2. **System Administration**
+   - Service discovery
+   - Configuration verification
+   - Access control testing
+   - Security posture assessment
+
+3. **Penetration Testing**
+   - Initial reconnaissance
+   - Service enumeration
+   - Authentication testing
+   - Vulnerability assessment
+
+4. **Compliance Checking**
+   - Security policy verification
+   - Access control validation
+   - Service configuration auditing
+   - Default credential detection
 
 ## Installation
 
@@ -61,127 +165,16 @@ redgem_bruter -target example.com -o results.json -f json
 redgem_bruter -target example.com -a
 ```
 
-## Supported Services
-
-The tool supports scanning for the following services:
-
-- AFP (Apple Filing Protocol) - Port 548
-- DB2 (IBM DB2 Database) - Port 50000
-- FTP (File Transfer Protocol) - Port 21
-- HTTP (Hypertext Transfer Protocol) - Port 80
-- HTTPS (HTTP Secure) - Port 443
-- LDAP (Lightweight Directory Access Protocol) - Ports 389, 636
-- MSSQL (Microsoft SQL Server) - Port 1433
-- MySQL (MySQL Database) - Port 3306
-- POP3 (Post Office Protocol 3) - Ports 110, 995
-- PostgreSQL (PostgreSQL Database) - Port 5432
-- Redis (Redis Database) - Port 6379
-- SMB (Server Message Block) - Ports 445, 139
-- SNMP (Simple Network Management Protocol) - Ports 161, 162 (UDP)
-- SSH (Secure Shell) - Port 22
-- Telnet (Telnet Protocol) - Port 23
-- Kerberos (Kerberos Authentication) - Port 88
-- VNC (Virtual Network Computing) - Ports 5900-5902
-- WinRM (Windows Remote Management) - Ports 5985, 5986
-- TeamCity (JetBrains TeamCity) - Port 8111
-- MongoDB (MongoDB Database) - Port 27017
-- CouchDB (Apache CouchDB) - Port 5984
-- Elasticsearch (Elasticsearch Search Engine) - Port 9200
-- Memcached (Memcached Cache) - Port 11211
-- RabbitMQ (RabbitMQ Message Broker) - Ports 5672, 15672
-- MQTT (Message Queuing Telemetry Transport) - Ports 1883, 8883
-- NATS (NATS Messaging System) - Port 4222
-- Docker API (Docker API) - Ports 2375, 2376
-- Jenkins (Jenkins CI/CD) - Port 8080
-- Grafana (Grafana Monitoring) - Port 3000
-- Kibana (Kibana Dashboard) - Port 5601
-- Netdata (Netdata Monitoring) - Port 19999
-- Squid (Squid Proxy Server) - Port 3128
-
-## Service-Specific Actions
-
-Each service has its own specific action implementation:
-
-### MongoDB
-- Uses `mongodb-info` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### Redis
-- Uses `redis-info` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### Elasticsearch
-- Uses `http-elasticsearch-header` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### HTTP/HTTPS
-- Uses `http-auth-finder` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### SSH
-- Uses `ssh-auth-methods` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### MySQL
-- Uses `mysql-info` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### PostgreSQL
-- Uses `pgsql-brute` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### LDAP
-- Uses `ldap-brute` Nmap script
-- Checks for authentication requirements
-- Supports brute force attempts
-
-### Squid Proxy
-- Uses `http-proxy-brute` Nmap script
-- Checks for authentication requirements
-- Supports multiple authentication methods (Basic, Digest, NTLM)
-- Detects Squid-specific headers and error messages
-- Supports brute force attempts with common proxy credentials
-- Default port: 3128
-
-## Output Formats
-
-1. Text (default):
-```
-IP: 192.168.1.1, Service: http, Port: 80, Protocol: tcp, Open: true, Auth: false, Info: [Nmap scan results]
-```
-
-2. JSON:
-```json
-{
-    "ip": "192.168.1.1",
-    "service": "http",
-    "port": 80,
-    "protocol": "tcp",
-    "open": true,
-    "auth": false,
-    "info": "[Nmap scan results]"
-}
-```
-
-3. CSV:
-```
-IP,Service,Port,Protocol,Open,Auth,Vulnerable,VulnDescription,DefaultCreds,DefaultUser,DefaultPass,GuestAccess,Version,Banner,Info,LastChecked
-192.168.1.1,http,80,tcp,true,false,false,,false,,,,,,,[Nmap scan results]
-```
-
 ## Project Structure
 
 ```
 .
 ├── cmd/            # Command-line interface
 ├── pkg/            # Core packages
+│   ├── scanner/    # Scanning functionality
+│   │   ├── actions/    # Service-specific actions
+│   │   └── wordlists/  # Brute force wordlists
+│   └── services/   # Service definitions
 ├── wordlists/      # Default wordlists
 ├── go.mod          # Go module file
 ├── go.sum          # Go module checksums
@@ -190,8 +183,18 @@ IP,Service,Port,Protocol,Open,Auth,Vulnerable,VulnDescription,DefaultCreds,Defau
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a Pull Request. We're particularly interested in:
+
+- New service support
+- Improved detection methods
+- Additional wordlists
+- Bug fixes and improvements
+- Documentation updates
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Disclaimer
+
+This tool is designed for legitimate security testing and system administration purposes only. Always ensure you have proper authorization before testing any system. The authors are not responsible for any misuse or damage caused by this tool.
