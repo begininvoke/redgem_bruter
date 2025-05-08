@@ -28,7 +28,7 @@ go get github.com/yourusername/redgem_bruter
 ## Usage
 
 ```bash
-redgem_bruter -target <host> [-port <ports>] [-o <output_file>] [-f <format>] [-w <wordlist>]
+redgem_bruter -target <host> [-port <ports>] [-o <output_file>] [-f <format>] [-a]
 ```
 
 ### Flags
@@ -37,7 +37,7 @@ redgem_bruter -target <host> [-port <ports>] [-o <output_file>] [-f <format>] [-
 - `-port`: Comma-separated list of ports to scan (optional)
 - `-o`: Output file for results (optional)
 - `-f`: Output format (text, json, or csv) (default: text)
-- `-w`: Wordlist file for brute force attempts (optional)
+- `-a`: Enable brute force attack mode (optional)
 
 ### Examples
 
@@ -56,27 +56,47 @@ redgem_bruter -target example.com -port 80,443,8080
 redgem_bruter -target example.com -o results.json -f json
 ```
 
-4. Use a wordlist for brute force attempts:
+4. Enable brute force attack mode:
 ```bash
-redgem_bruter -target example.com -w wordlist.txt
+redgem_bruter -target example.com -a
 ```
 
 ## Supported Services
 
-The tool supports scanning for various services including:
+The tool supports scanning for the following services:
 
-- HTTP/HTTPS
-- FTP
-- SSH
-- MySQL
-- PostgreSQL
-- MongoDB
-- Redis
-- Elasticsearch
-- LDAP
-- And many more...
-
-For a complete list of supported services and their default ports, see the services package.
+- AFP (Apple Filing Protocol) - Port 548
+- DB2 (IBM DB2 Database) - Port 50000
+- FTP (File Transfer Protocol) - Port 21
+- HTTP (Hypertext Transfer Protocol) - Port 80
+- HTTPS (HTTP Secure) - Port 443
+- LDAP (Lightweight Directory Access Protocol) - Ports 389, 636
+- MSSQL (Microsoft SQL Server) - Port 1433
+- MySQL (MySQL Database) - Port 3306
+- POP3 (Post Office Protocol 3) - Ports 110, 995
+- PostgreSQL (PostgreSQL Database) - Port 5432
+- Redis (Redis Database) - Port 6379
+- SMB (Server Message Block) - Ports 445, 139
+- SNMP (Simple Network Management Protocol) - Ports 161, 162 (UDP)
+- SSH (Secure Shell) - Port 22
+- Telnet (Telnet Protocol) - Port 23
+- Kerberos (Kerberos Authentication) - Port 88
+- VNC (Virtual Network Computing) - Ports 5900-5902
+- WinRM (Windows Remote Management) - Ports 5985, 5986
+- TeamCity (JetBrains TeamCity) - Port 8111
+- MongoDB (MongoDB Database) - Port 27017
+- CouchDB (Apache CouchDB) - Port 5984
+- Elasticsearch (Elasticsearch Search Engine) - Port 9200
+- Memcached (Memcached Cache) - Port 11211
+- RabbitMQ (RabbitMQ Message Broker) - Ports 5672, 15672
+- MQTT (Message Queuing Telemetry Transport) - Ports 1883, 8883
+- NATS (NATS Messaging System) - Port 4222
+- Docker API (Docker API) - Ports 2375, 2376
+- Jenkins (Jenkins CI/CD) - Port 8080
+- Grafana (Grafana Monitoring) - Port 3000
+- Kibana (Kibana Dashboard) - Port 5601
+- Netdata (Netdata Monitoring) - Port 19999
+- Squid (Squid Proxy Server) - Port 3128
 
 ## Service-Specific Actions
 
@@ -122,6 +142,14 @@ Each service has its own specific action implementation:
 - Checks for authentication requirements
 - Supports brute force attempts
 
+### Squid Proxy
+- Uses `http-proxy-brute` Nmap script
+- Checks for authentication requirements
+- Supports multiple authentication methods (Basic, Digest, NTLM)
+- Detects Squid-specific headers and error messages
+- Supports brute force attempts with common proxy credentials
+- Default port: 3128
+
 ## Output Formats
 
 1. Text (default):
@@ -144,7 +172,8 @@ IP: 192.168.1.1, Service: http, Port: 80, Protocol: tcp, Open: true, Auth: false
 
 3. CSV:
 ```
-192.168.1.1,http,80,tcp,true,false,[Nmap scan results]
+IP,Service,Port,Protocol,Open,Auth,Vulnerable,VulnDescription,DefaultCreds,DefaultUser,DefaultPass,GuestAccess,Version,Banner,Info,LastChecked
+192.168.1.1,http,80,tcp,true,false,false,,false,,,,,,,[Nmap scan results]
 ```
 
 ## Project Structure
