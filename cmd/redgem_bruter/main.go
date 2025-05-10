@@ -27,30 +27,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Parse ports
 	var portList []int
+
+	// First check for port in target (IP:PORT format)
+	if strings.Contains(*target, ":") {
+		parts := strings.Split(*target, ":")
+		if len(parts) > 1 {
+			*target = parts[0]
+			var port int
+			fmt.Sscanf(parts[1], "%d", &port)
+			if port > 0 && port < 65536 {
+				portList = append(portList, port)
+			}
+		}
+	}
+
+	// Then check -port flag
 	if *ports != "" {
-		// Handle port keyword format
-		if strings.Contains(*ports, "port") {
-			parts := strings.Split(*ports, "port")
-			if len(parts) > 1 {
-				*ports = strings.TrimSpace(parts[1])
-			}
-		}
-
-		// Handle port in IP address format
-		if strings.Contains(*target, ":") {
-			parts := strings.Split(*target, ":")
-			if len(parts) > 1 {
-				*target = parts[0]
-				var port int
-				fmt.Sscanf(parts[1], "%d", &port)
-				if port > 0 && port < 65536 {
-					portList = append(portList, port)
-				}
-			}
-		}
-
 		// Parse comma-separated ports
 		portStrings := strings.Split(*ports, ",")
 		for _, portStr := range portStrings {
@@ -61,6 +54,17 @@ func main() {
 			}
 		}
 	}
+
+	// Remove duplicate ports
+	portMap := make(map[int]bool)
+	var uniquePortList []int
+	for _, port := range portList {
+		if !portMap[port] {
+			portMap[port] = true
+			uniquePortList = append(uniquePortList, port)
+		}
+	}
+	portList = uniquePortList
 	// Check if wordlist files are available
 	wordlistPath := filepath.Join("pkg", "scanner", "wordlists")
 	if _, err := os.Stat(wordlistPath); os.IsNotExist(err) {
