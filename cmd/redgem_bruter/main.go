@@ -76,6 +76,8 @@ func main() {
 			serviceWordlist := filepath.Join(wordlistPath, service+".txt")
 			if _, err := os.Stat(serviceWordlist); os.IsNotExist(err) {
 				fmt.Printf("Warning: Wordlist for %s service not found. Using hardcoded credentials.\n", service)
+			} else {
+				fmt.Printf("Warning: Wordlist for %s service found.\n", service)
 			}
 		}
 	}
