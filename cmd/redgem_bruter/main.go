@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"redgem_bruter/pkg/scanner"
 
 	"strings"
@@ -60,7 +61,20 @@ func main() {
 			}
 		}
 	}
-
+	// Check if wordlist files are available
+	wordlistPath := filepath.Join("pkg", "scanner", "wordlists")
+	if _, err := os.Stat(wordlistPath); os.IsNotExist(err) {
+		fmt.Println("Warning: Wordlist directory not found. Using hardcoded credentials.")
+	} else {
+		// Check for specific service wordlists
+		services := []string{"http", "ssh", "ftp", "mysql", "postgres", "redis", "mongodb"}
+		for _, service := range services {
+			serviceWordlist := filepath.Join(wordlistPath, service+".txt")
+			if _, err := os.Stat(serviceWordlist); os.IsNotExist(err) {
+				fmt.Printf("Warning: Wordlist for %s service not found. Using hardcoded credentials.\n", service)
+			}
+		}
+	}
 	// Create scanner instance
 	s := scanner.NewScanner(*target, portList, *attack, *outputFile, *format)
 
