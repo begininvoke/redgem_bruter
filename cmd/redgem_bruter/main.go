@@ -71,7 +71,7 @@ func main() {
 		fmt.Println("Warning: Wordlist directory not found. Using hardcoded credentials.")
 	} else {
 		// Check for specific service wordlists
-		services := []string{"http", "ssh", "ftp", "mysql", "postgres", "redis", "mongodb"}
+		services := []string{"http", "ssh"}
 		for _, service := range services {
 			serviceWordlist := filepath.Join(wordlistPath, service+".txt")
 			if _, err := os.Stat(serviceWordlist); os.IsNotExist(err) {
