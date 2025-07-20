@@ -1,14 +1,11 @@
 package actions
 
 import (
-	"context"
 	"fmt"
 	"strings"
-
-	"github.com/redis/go-redis/v9"
 )
 
-// RedisAction implements Redis-specific actions
+// RedisAction implements Redis service scanning
 type RedisAction struct {
 	BaseAction
 }
@@ -20,21 +17,33 @@ func NewRedisAction() *RedisAction {
 	}
 }
 
-// CheckAuth checks if Redis requires authentication
-func (r *RedisAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if Redis requires authentication and potential vulnerabilities
+func (r *RedisAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := r.CheckPort(r.Host, r.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Run Redis auth script
+	// Get banner to check version
+	_, version, err := r.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "2.8") || strings.Contains(version, "3.0") {
+		vulnerable = true
+	}
+
+	// Run Redis-specific auth detection
 	output, err := r.RunNmapScript(r.Host, r.Port, "redis-info")
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 
 	// Check if authentication is required
@@ -42,63 +51,54 @@ func (r *RedisAction) CheckAuth() (bool, string, error) {
 		strings.Contains(output, "NOAUTH") ||
 		strings.Contains(output, "WRONGPASS")
 
-	return requiresAuth, output, nil
+	return requiresAuth, fmt.Sprintf("Redis %s - %s", version, output), vulnerable, nil
 }
 
-// BruteForce attempts to brute force Redis
-func (r *RedisAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := r.ReadServiceWordlist("redis")
+// CheckVulnerability checks for Redis-specific vulnerabilities
+func (r *RedisAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := r.GetBanner()
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"default:",
-			"default:redis",
-			"default:password",
-			"default:123456",
-			"redis:redis",
-			"redis:password",
-			"redis:123456",
-		}
+		return false, "", err
 	}
 
-	var success bool
-	var successInfo string
+	vulnerabilities := []string{}
 
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		client := redis.NewClient(&redis.Options{
-			Addr:         fmt.Sprintf("%s:%d", r.Host, r.Port),
-			Password:     password,
-			Username:     username,
-			DialTimeout:  r.Timeout,
-			ReadTimeout:  r.Timeout,
-			WriteTimeout: r.Timeout,
-		})
-
-		// Try to ping the server
-		ctx, cancel := context.WithTimeout(context.Background(), r.Timeout)
-		err := client.Ping(ctx).Err()
-		cancel()
-
-		if err == nil {
-			client.Close()
-			success = true
-			successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-			break
-		}
-		client.Close()
+	// Check for known vulnerable versions
+	if strings.Contains(version, "2.8") || strings.Contains(version, "3.0") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	if !success {
-		return false, "Failed to brute force Redis with common credentials", nil
+	// Check for anonymous access
+	output, err := r.RunNmapScript(r.Host, r.Port, "redis-brute")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
 	}
 
-	return true, successInfo, nil
+	// Check for default credentials
+	output, err = r.RunNmapScript(r.Host, r.Port, "redis-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
+}
+
+// BruteForce attempts to brute force Redis credentials
+func (r *RedisAction) BruteForce() (bool, string, error) {
+	// Run Redis brute force script
+	output, err := r.RunNmapScript(r.Host, r.Port, "redis-brute")
+	if err != nil {
+		return false, "", err
+	}
+
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
+
+	return success, output, nil
 }

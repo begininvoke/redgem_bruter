@@ -1,0 +1,51 @@
+# RedGem Bruter Configuration File
+
+# Scan Configuration
+scan:
+  default_timeout: 30s
+  max_concurrent_scans: 10
+  rate_limit: 100  # requests per second
+
+# Output Configuration
+output:
+  default_format: "text"
+  include_timestamp: true
+  include_banner: true
+  include_version: true
+
+# Brute Force Configuration
+brute_force:
+  enabled: false
+  max_attempts_per_service: 100
+  delay_between_attempts: 1s
+  wordlist_path: "pkg/scanner/wordlists"
+
+# Service Configuration
+services:
+  # Services to scan by default
+  default_services:
+    - "ssh"
+    - "http"
+    - "https"
+    - "ftp"
+    - "mysql"
+    - "postgres"
+    - "redis"
+    - "mongodb"
+    - "elasticsearch"
+  
+  # Services to skip
+  skip_services:
+    - "snmp"  # Often triggers IDS/IPS
+
+# Vulnerability Scanning
+vulnerability:
+  check_default_credentials: true
+  check_known_vulnerabilities: true
+  check_weak_configurations: true
+
+# Logging
+logging:
+  level: "info"
+  file: "redgem_bruter.log"
+  include_debug: false 

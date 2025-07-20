@@ -112,7 +112,8 @@ func (p *Port8080Action) CheckAuth() (bool, string, error) {
 		jenkins.Host = p.Host
 		jenkins.Port = p.Port
 		jenkins.Timeout = p.Timeout
-		return jenkins.CheckAuth()
+		requiresAuth, info, _, err := jenkins.CheckAuth()
+		return requiresAuth, info, err
 
 	case "proxy":
 		proxy := NewProxyAction()

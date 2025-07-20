@@ -2,7 +2,6 @@ package actions
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 )
 
@@ -14,184 +13,92 @@ type JenkinsAction struct {
 // NewJenkinsAction creates a new Jenkins action
 func NewJenkinsAction() *JenkinsAction {
 	return &JenkinsAction{
-		BaseAction: *NewBaseAction(),
+		BaseAction: BaseAction{},
 	}
 }
 
-// CheckAuth checks if Jenkins requires authentication
-func (j *JenkinsAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if Jenkins requires authentication and potential vulnerabilities
+func (j *JenkinsAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := j.CheckPort(j.Host, j.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: j.Timeout,
+	// Get banner to check version
+	_, version, err := j.GetBanner()
+	if err != nil {
+		return false, "", false, err
 	}
 
-	// Try to access Jenkins endpoints
-	endpoints := []string{
-		"/",
-		"/login",
-		"/api/json",
-		"/manage",
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "Jenkins 2.0") || strings.Contains(version, "Jenkins 2.1") {
+		vulnerable = true
 	}
 
-	var requiresAuth bool
-	var info string
-
-	for _, endpoint := range endpoints {
-		url := fmt.Sprintf("http://%s:%d%s", j.Host, j.Port, endpoint)
-		resp, err := client.Get(url)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Check for basic auth
-		if resp.StatusCode == http.StatusUnauthorized {
-			authHeader := resp.Header.Get("WWW-Authenticate")
-			if strings.Contains(strings.ToLower(authHeader), "basic") {
-				requiresAuth = true
-				info = "HTTP Basic Authentication required"
-				break
-			}
-		}
-
-		// Check for Jenkins login page
-		if resp.StatusCode == http.StatusOK {
-			contentType := resp.Header.Get("Content-Type")
-			if strings.Contains(contentType, "text/html") {
-				// Check response body for login indicators
-				if strings.Contains(resp.Header.Get("Set-Cookie"), "JSESSIONID") ||
-					strings.Contains(resp.Header.Get("Set-Cookie"), "jenkins") {
-					requiresAuth = true
-					info = "Jenkins login page detected"
-					break
-				}
-			}
-		}
+	// Run Jenkins-specific auth detection
+	output, err := j.RunNmapScript(j.Host, j.Port, "http-auth")
+	if err != nil {
+		return false, "", false, err
 	}
 
-	// If no auth detected through HTTP, try nmap script
-	if !requiresAuth {
-		output, err := j.RunNmapScript(j.Host, j.Port, "http-auth-finder")
-		if err != nil {
-			return false, "", err
-		}
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "login required") ||
+		strings.Contains(output, "credentials required")
 
-		// Check if authentication is required
-		requiresAuth = strings.Contains(output, "authentication required") ||
-			strings.Contains(output, "login required") ||
-			strings.Contains(output, "Jenkins login")
+	return requiresAuth, fmt.Sprintf("Jenkins %s - %s", version, output), vulnerable, nil
+}
 
-		if requiresAuth {
-			info = output
-		}
+// CheckVulnerability checks for Jenkins-specific vulnerabilities
+func (j *JenkinsAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := j.GetBanner()
+	if err != nil {
+		return false, "", err
 	}
 
-	return requiresAuth, info, nil
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "Jenkins 2.0") || strings.Contains(version, "Jenkins 2.1") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
+	}
+
+	// Check for default credentials
+	output, err := j.RunNmapScript(j.Host, j.Port, "http-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	// Check for weak encryption
+	output, err = j.RunNmapScript(j.Host, j.Port, "ssl-cert")
+	if err == nil && strings.Contains(output, "Weak encryption") {
+		vulnerabilities = append(vulnerabilities, "Weak encryption enabled")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force Jenkins credentials
 func (j *JenkinsAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := j.ReadServiceWordlist("jenkins")
+	// Run Jenkins brute force script
+	output, err := j.RunNmapScript(j.Host, j.Port, "http-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"admin:admin",
-			"admin:password",
-			"admin:jenkins",
-			"jenkins:jenkins",
-			"jenkins:password",
-			"root:root",
-			"root:password",
-		}
+		return false, "", err
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: j.Timeout,
-	}
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	var success bool
-	var successInfo string
-
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		// Try basic auth first
-		url := fmt.Sprintf("http://%s:%d/api/json", j.Host, j.Port)
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			continue
-		}
-
-		req.SetBasicAuth(username, password)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			success = true
-			successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s using Basic Auth", username, password)
-			break
-		}
-
-		// Try Jenkins login page
-		url = fmt.Sprintf("http://%s:%d/j_acegi_security_check", j.Host, j.Port)
-		formData := fmt.Sprintf("j_username=%s&j_password=%s&from=/&Submit=Sign+in", username, password)
-		req, err = http.NewRequest("POST", url, strings.NewReader(formData))
-		if err != nil {
-			continue
-		}
-
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err = client.Do(req)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Check for successful login
-		if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusOK {
-			// Check for session cookie
-			if strings.Contains(resp.Header.Get("Set-Cookie"), "JSESSIONID") {
-				success = true
-				successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s using Jenkins login", username, password)
-				break
-			}
-		}
-	}
-
-	if !success {
-		// Try nmap script as fallback
-		output, err := j.RunNmapScript(j.Host, j.Port, "http-brute")
-		if err != nil {
-			return false, "", err
-		}
-
-		success = strings.Contains(output, "Valid credentials") ||
-			strings.Contains(output, "Login successful")
-
-		if success {
-			successInfo = output
-		}
-	}
-
-	return success, successInfo, nil
+	return success, output, nil
 }

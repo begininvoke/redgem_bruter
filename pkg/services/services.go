@@ -33,7 +33,7 @@ func GetAllServices() map[string]Service {
 			Name:        "HTTP",
 			Ports:       []int{80},
 			Protocol:    "tcp",
-			Description: "Hypertext Transfer Protocol",
+			Description: "Hypertext Transfer Protocol (Common alternative ports: 8080, 8000, 3000)",
 		},
 		"https": {
 			Name:        "HTTPS",
@@ -177,13 +177,19 @@ func GetAllServices() map[string]Service {
 			Name:        "Jenkins",
 			Ports:       []int{8080},
 			Protocol:    "tcp",
-			Description: "Jenkins CI/CD",
+			Description: "Jenkins CI/CD (Common port overlap: HTTP proxy, Tomcat, other web services)",
+		},
+		"http-proxy": {
+			Name:        "http-proxy",
+			Ports:       []int{8080},
+			Protocol:    "tcp",
+			Description: "HTTP Proxy",
 		},
 		"grafana": {
 			Name:        "Grafana",
 			Ports:       []int{3000},
 			Protocol:    "tcp",
-			Description: "Grafana Monitoring",
+			Description: "Grafana Monitoring (Common port overlap: HTTP services, Node.js apps)",
 		},
 		"kibana": {
 			Name:        "Kibana",

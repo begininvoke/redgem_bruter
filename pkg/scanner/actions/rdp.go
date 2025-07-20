@@ -1,12 +1,8 @@
 package actions
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"strings"
-	"sync"
-	"time"
 )
 
 // RDPAction implements RDP service scanning
@@ -16,108 +12,99 @@ type RDPAction struct {
 
 // NewRDPAction creates a new RDP action
 func NewRDPAction() *RDPAction {
-	return &RDPAction{}
+	return &RDPAction{
+		BaseAction: BaseAction{},
+	}
 }
 
-// CheckAuth checks if RDP requires authentication
-func (r *RDPAction) CheckAuth() (bool, string, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", r.Host, r.Port), 5*time.Second)
+// CheckAuth checks if RDP requires authentication and potential vulnerabilities
+func (r *RDPAction) CheckAuth() (bool, string, bool, error) {
+	// First check if port is open
+	open, err := r.CheckPort(r.Host, r.Port)
+	if err != nil {
+		return false, "", false, err
+	}
+	if !open {
+		return false, "Port closed", false, nil
+	}
+
+	// Get banner to check version
+	_, version, err := r.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "Windows XP") || strings.Contains(version, "Windows 2000") {
+		vulnerable = true
+	}
+
+	// Run RDP-specific auth detection
+	output, err := r.RunNmapScript(r.Host, r.Port, "rdp-enum-encryption")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "login required") ||
+		strings.Contains(output, "credentials required")
+
+	return requiresAuth, fmt.Sprintf("RDP %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for RDP-specific vulnerabilities
+func (r *RDPAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := r.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer conn.Close()
 
-	// Read the initial RDP response
-	reader := bufio.NewReader(conn)
-	_, err = reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "Windows XP") || strings.Contains(version, "Windows 2000") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	// RDP always requires authentication
-	return true, "RDP requires authentication", nil
+	// Check for BlueKeep vulnerability
+	output, err := r.RunNmapScript(r.Host, r.Port, "rdp-vuln-ms12-020")
+	if err == nil && strings.Contains(output, "VULNERABLE") {
+		vulnerabilities = append(vulnerabilities, "BlueKeep vulnerability (CVE-2019-0708)")
+	}
+
+	// Check for default credentials
+	output, err = r.RunNmapScript(r.Host, r.Port, "rdp-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	// Check for weak encryption
+	output, err = r.RunNmapScript(r.Host, r.Port, "rdp-enum-encryption")
+	if err == nil && strings.Contains(output, "Weak encryption") {
+		vulnerabilities = append(vulnerabilities, "Weak encryption enabled")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force RDP credentials
 func (r *RDPAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := r.ReadServiceWordlist("rdp")
+	// Run RDP brute force script
+	output, err := r.RunNmapScript(r.Host, r.Port, "rdp-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"administrator:administrator",
-			"administrator:admin",
-			"administrator:password",
-			"administrator:123456",
-		}
+		return false, "", err
 	}
 
-	// Create a semaphore to limit concurrent attempts
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	var success bool
-	var successMsg string
-	var mu sync.Mutex
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		wg.Add(1)
-		go func(cred string) {
-			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
-
-			parts := strings.Split(cred, ":")
-			if len(parts) != 2 {
-				return
-			}
-
-			username, password := parts[0], parts[1]
-
-			// Connect to RDP server
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", r.Host, r.Port), 5*time.Second)
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-
-			// Read the initial RDP response
-			reader := bufio.NewReader(conn)
-			_, err = reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			// Send X.224 Connection Request
-			// This is a simplified version. In a real implementation,
-			// you would need to handle the full RDP protocol.
-			connReq := []byte{
-				0x03, 0x00, // TPKT Header
-				0x00, 0x2c, // Length
-				0x02, 0xf0, 0x80, // X.224 Connection Request
-			}
-			_, err = conn.Write(connReq)
-			if err != nil {
-				return
-			}
-
-			// Read the response
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			// Check if the connection was accepted
-			// This is a simplified check. In a real implementation,
-			// you would need to parse the RDP protocol properly.
-			if !strings.Contains(strings.ToLower(response), "error") {
-				mu.Lock()
-				success = true
-				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s", username, password)
-				mu.Unlock()
-			}
-		}(cred)
-	}
-
-	wg.Wait()
-	return success, successMsg, nil
+	return success, output, nil
 }

@@ -1,12 +1,15 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"redgem_bruter/pkg/scanner/actions"
 	"redgem_bruter/pkg/services"
 	"strings"
 	"time"
+
+	"github.com/Ullaakut/nmap/v3"
 )
 
 // ScanResult represents the result of a service scan
@@ -39,6 +42,12 @@ type Scanner struct {
 	OutputFile string
 	Format     string
 	IP         string
+	Timeout    time.Duration
+}
+
+// SetTimeout sets the timeout for service checks
+func (s *Scanner) SetTimeout(timeout time.Duration) {
+	s.Timeout = timeout
 }
 
 // NewScanner creates a new scanner instance
@@ -58,14 +67,64 @@ func NewScanner(target string, ports []int, attack bool, outputFile, format stri
 		OutputFile: outputFile,
 		Format:     format,
 		IP:         ipStr,
+		Timeout:    30 * time.Second,
 	}
 }
 
+// detectService attempts to detect the service running on a port using nmap
+func (s *Scanner) detectService(port int) (string, string, error) {
+	// Create nmap scanner with service detection
+	nmapScanner := NewNmapScanner(30 * time.Second)
+
+	// Try to get service version first
+	version, err := nmapScanner.ScanServiceVersion(s.Target, port)
+	if err != nil {
+		return "", "", fmt.Errorf("service version detection failed: %v", err)
+	}
+
+	// Run a basic service detection scan
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	scanner, err := nmap.NewScanner(
+		ctx,
+		nmap.WithTargets(s.Target),
+		nmap.WithPorts(fmt.Sprintf("%d", port)),
+		nmap.WithServiceInfo(),
+	)
+	if err != nil {
+		return "", version, fmt.Errorf("unable to create nmap scanner: %v", err)
+	}
+
+	result, warnings, err := scanner.Run()
+	if len(*warnings) > 0 {
+		fmt.Printf("Scan warnings: %s\n", *warnings)
+	}
+	if err != nil {
+		return "", version, fmt.Errorf("unable to run nmap scan: %v", err)
+	}
+
+	// Extract service name from results
+	for _, host := range result.Hosts {
+		if len(host.Ports) == 0 || len(host.Addresses) == 0 {
+			continue
+		}
+
+		for _, port := range host.Ports {
+			if port.Service.Name != "" {
+				return port.Service.Name, version, nil
+			}
+		}
+	}
+
+	return "", version, nil
+}
+
 // ScanPort performs a port scan on the specified port
-func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
+func (s *Scanner) ScanPort(service services.Service) (*ScanResult, error) {
 	result := &ScanResult{
 		IP:          s.IP,
-		Port:        port,
+		Port:        service.Ports[0],
 		Protocol:    "tcp",
 		Open:        false,
 		Auth:        false,
@@ -74,7 +133,7 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 
 	// Create nmap scanner
 	nmapScanner := actions.NewBaseAction()
-	open, err := nmapScanner.CheckPort(s.Target, port)
+	open, err := nmapScanner.CheckPort(s.Target, service.Ports[0])
 	if err != nil {
 		result.Error = err
 		return result, nil
@@ -86,33 +145,30 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 
 	result.Open = true
 
-	// First try to get the banner to identify the service
-	banner, version, err := nmapScanner.GetBanner()
-	if err == nil && banner != "" {
-		result.Banner = banner
+	// Try to detect service using nmap
+	detectedService, version, err := s.detectService(service.Ports[0])
+	if err == nil && detectedService != "" {
+		result.Service = detectedService
 		result.Version = version
+	} else {
+		// If nmap detection fails, try to get the banner
+		banner, version, err := nmapScanner.GetBanner()
+		if err == nil && banner != "" {
+			result.Banner = banner
+			result.Version = version
 
-		// Try to identify service from banner
-		for serviceName, service := range s.Services {
-			if strings.Contains(strings.ToLower(banner), strings.ToLower(service.Name)) {
-				result.Service = serviceName
-				break
-			}
-		}
-	}
-
-	// If service not identified from banner, try default port mapping
-	if result.Service == "" {
-		for serviceName, service := range s.Services {
-			for _, servicePort := range service.Ports {
-				if port == servicePort {
+			// Try to identify service from banner
+			for serviceName, service := range s.Services {
+				if strings.Contains(strings.ToLower(banner), strings.ToLower(service.Name)) {
 					result.Service = serviceName
 					break
 				}
 			}
-			if result.Service != "" {
-				break
-			}
+		}
+
+		// If service still not identified, use default port mapping
+		if result.Service == "" {
+			result.Service = service.Name
 		}
 	}
 
@@ -123,20 +179,29 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 
 		// Set host and port
 		serviceAction.SetHost(s.Target)
-		serviceAction.SetPort(port)
+		serviceAction.SetPort(result.Port)
 
 		// Check authentication
-		requiresAuth, info, err := serviceAction.CheckAuth()
+		requiresAuth, info, _, err := serviceAction.CheckAuth()
 		if err != nil {
 			result.Error = err
 		}
 		result.Auth = requiresAuth
 		result.Info = info
 
-		// Check for vulnerabilities
+		// Check for vulnerabilities - more sophisticated approach
 		if !requiresAuth {
-			result.Vulnerable = true
-			result.VulnDescription = "Service does not require authentication"
+			// Check if this is a service that should typically require authentication
+			servicesThatShouldHaveAuth := map[string]bool{
+				"ssh": true, "mysql": true, "postgres": true, "redis": true,
+				"mongodb": true, "mssql": true, "ftp": true, "telnet": true,
+				"rdp": true, "vnc": true, "winrm": true, "elasticsearch": true,
+			}
+
+			if servicesThatShouldHaveAuth[result.Service] {
+				result.Vulnerable = true
+				result.VulnDescription = "Service does not require authentication (potential security risk)"
+			}
 		}
 	} else {
 		// If we couldn't identify the service, mark it as unknown
@@ -149,20 +214,33 @@ func (s *Scanner) ScanPort(port int) (*ScanResult, error) {
 
 // AttackService attempts to brute force a service
 func (s *Scanner) AttackService(result *ScanResult) error {
+	// Only attack services that are open AND require authentication
 	if !result.Open || !result.Auth {
 		return nil
 	}
 
+	// Get the appropriate service action
 	serviceAction := actions.GetServiceAction(result.Service)
+	if serviceAction == nil {
+		return fmt.Errorf("no action handler available for service: %s", result.Service)
+	}
+
 	serviceAction.SetHost(s.Target)
 	serviceAction.SetPort(result.Port)
 
 	success, bruteInfo, err := serviceAction.BruteForce()
 	if err != nil {
-		return err
+		return fmt.Errorf("brute force failed for %s on port %d: %v", result.Service, result.Port, err)
 	}
+
 	if success {
 		result.Info += "\nBrute force successful: " + bruteInfo
+		result.Vulnerable = true
+		if result.VulnDescription == "" {
+			result.VulnDescription = "Brute force attack successful"
+		} else {
+			result.VulnDescription += "; Brute force attack successful"
+		}
 	}
 
 	return nil
@@ -179,21 +257,49 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 		}
 	}
 
-	// First, scan all ports
+	// Remove duplicate ports
+	portMap := make(map[int]bool)
+	var uniquePorts []int
 	for _, port := range s.Ports {
-		result, err := s.ScanPort(port)
+		if !portMap[port] {
+			portMap[port] = true
+			uniquePorts = append(uniquePorts, port)
+		}
+	}
+	s.Ports = uniquePorts
+
+	fmt.Printf("Scanning %d unique ports...\n", len(s.Ports))
+
+	// First, scan all services
+	serviceCount := len(s.Services)
+	currentService := 0
+	for serviceName, service := range s.Services {
+		currentService++
+		fmt.Printf("Scanning service %d/%d: %s (ports: %v)\n", currentService, serviceCount, serviceName, service.Ports)
+
+		result, err := s.ScanPort(service)
 		if err != nil {
-			return nil, err
+			fmt.Printf("Warning: Error scanning %s: %v\n", serviceName, err)
+			continue
 		}
 		results = append(results, result)
 	}
 
 	// Then, if attack mode is enabled, attempt brute force on services that require auth
 	if s.Attack {
+		fmt.Println("Attack mode enabled. Starting brute force attempts...")
+		attackCount := 0
 		for _, result := range results {
-			if err := s.AttackService(result); err != nil {
-				fmt.Printf("Error attacking %s on port %d: %v\n", result.Service, result.Port, err)
+			if result.Open && result.Auth {
+				attackCount++
+				fmt.Printf("Attempting brute force on %s (port %d)...\n", result.Service, result.Port)
+				if err := s.AttackService(result); err != nil {
+					fmt.Printf("Error attacking %s on port %d: %v\n", result.Service, result.Port, err)
+				}
 			}
+		}
+		if attackCount == 0 {
+			fmt.Println("No services requiring authentication found for brute force attempts.")
 		}
 	}
 

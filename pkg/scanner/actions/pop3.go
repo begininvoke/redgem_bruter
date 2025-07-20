@@ -1,11 +1,8 @@
 package actions
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"strings"
-	"time"
 )
 
 // POP3Action implements POP3 service scanning
@@ -16,50 +13,79 @@ type POP3Action struct {
 // NewPOP3Action creates a new POP3 action
 func NewPOP3Action() *POP3Action {
 	return &POP3Action{
-		BaseAction: *NewBaseAction(),
+		BaseAction: BaseAction{},
 	}
 }
 
-// CheckAuth checks if POP3 requires authentication
-func (p *POP3Action) CheckAuth() (bool, string, error) {
+// CheckAuth checks if POP3 requires authentication and potential vulnerabilities
+func (p *POP3Action) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := p.CheckPort(p.Host, p.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Try to connect to POP3 server
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", p.Host, p.Port), 5*time.Second)
+	// Get banner to check version
+	_, version, err := p.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "POP3 2.3") || strings.Contains(version, "POP3 2.4") {
+		vulnerable = true
+	}
+
+	// Run POP3-specific auth detection
+	output, err := p.RunNmapScript(p.Host, p.Port, "pop3-capabilities")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "login required") ||
+		strings.Contains(output, "credentials required")
+
+	return requiresAuth, fmt.Sprintf("POP3 %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for POP3-specific vulnerabilities
+func (p *POP3Action) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := p.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "POP3 2.3") || strings.Contains(version, "POP3 2.4") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	// Check if server requires authentication
-	if strings.Contains(strings.ToUpper(response), "+OK") {
-		// Try to get capabilities
-		fmt.Fprintf(conn, "CAPA\r\n")
-		response, err = reader.ReadString('\n')
-		if err != nil {
-			return false, "", err
-		}
-
-		// Check if AUTH is supported
-		if strings.Contains(strings.ToUpper(response), "AUTH") {
-			return true, "POP3 requires authentication", nil
-		}
+	// Check for default credentials
+	output, err := p.RunNmapScript(p.Host, p.Port, "pop3-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
 	}
 
-	return false, "POP3 does not require authentication", nil
+	// Check for weak encryption
+	output, err = p.RunNmapScript(p.Host, p.Port, "pop3-capabilities")
+	if err == nil && strings.Contains(output, "Weak encryption") {
+		vulnerabilities = append(vulnerabilities, "Weak encryption enabled")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force POP3 credentials

@@ -2,12 +2,10 @@ package actions
 
 import (
 	"fmt"
-	"net"
 	"strings"
-	"time"
 )
 
-// MongoDBAction implements MongoDB-specific actions
+// MongoDBAction implements MongoDB service scanning
 type MongoDBAction struct {
 	BaseAction
 }
@@ -19,21 +17,33 @@ func NewMongoDBAction() *MongoDBAction {
 	}
 }
 
-// CheckAuth checks if MongoDB requires authentication
-func (m *MongoDBAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if MongoDB requires authentication and potential vulnerabilities
+func (m *MongoDBAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := m.CheckPort(m.Host, m.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Run MongoDB auth script
+	// Get banner to check version
+	_, version, err := m.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "3.0") || strings.Contains(version, "3.2") {
+		vulnerable = true
+	}
+
+	// Run MongoDB-specific auth detection
 	output, err := m.RunNmapScript(m.Host, m.Port, "mongodb-info")
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 
 	// Check if authentication is required
@@ -41,72 +51,54 @@ func (m *MongoDBAction) CheckAuth() (bool, string, error) {
 		strings.Contains(output, "auth") ||
 		strings.Contains(output, "login")
 
-	return requiresAuth, output, nil
+	return requiresAuth, fmt.Sprintf("MongoDB %s - %s", version, output), vulnerable, nil
 }
 
-// BruteForce attempts to brute force MongoDB
-func (m *MongoDBAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := m.ReadServiceWordlist("mongodb")
+// CheckVulnerability checks for MongoDB-specific vulnerabilities
+func (m *MongoDBAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := m.GetBanner()
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"admin:admin",
-			"admin:password",
-			"admin:123456",
-			"root:root",
-			"root:password",
-			"root:123456",
-			"mongodb:mongodb",
-			"mongodb:password",
-			"mongodb:123456",
-		}
+		return false, "", err
 	}
 
-	var success bool
-	var successInfo string
+	vulnerabilities := []string{}
 
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		// Try to connect to MongoDB
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", m.Host, m.Port), m.Timeout)
-		if err != nil {
-			continue
-		}
-
-		// Send authentication request
-		authCmd := fmt.Sprintf(`{"authenticate": 1, "user": "%s", "pwd": "%s", "mechanism": "SCRAM-SHA-1"}`, username, password)
-		_, err = conn.Write([]byte(authCmd))
-		if err != nil {
-			conn.Close()
-			continue
-		}
-
-		// Read response
-		buf := make([]byte, 1024)
-		conn.SetReadDeadline(time.Now().Add(m.Timeout))
-		n, err := conn.Read(buf)
-		if err == nil && n > 0 {
-			response := string(buf[:n])
-			if strings.Contains(response, "ok") && !strings.Contains(response, "AuthenticationFailed") {
-				success = true
-				successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-				conn.Close()
-				break
-			}
-		}
-		conn.Close()
+	// Check for known vulnerable versions
+	if strings.Contains(version, "3.0") || strings.Contains(version, "3.2") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	if !success {
-		return false, "Failed to brute force MongoDB with common credentials", nil
+	// Check for anonymous access
+	output, err := m.RunNmapScript(m.Host, m.Port, "mongodb-brute")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
 	}
 
-	return true, successInfo, nil
+	// Check for default credentials
+	output, err = m.RunNmapScript(m.Host, m.Port, "mongodb-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
+}
+
+// BruteForce attempts to brute force MongoDB credentials
+func (m *MongoDBAction) BruteForce() (bool, string, error) {
+	// Run MongoDB brute force script
+	output, err := m.RunNmapScript(m.Host, m.Port, "mongodb-brute")
+	if err != nil {
+		return false, "", err
+	}
+
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
+
+	return success, output, nil
 }

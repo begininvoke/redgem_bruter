@@ -2,7 +2,6 @@ package actions
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 )
 
@@ -18,99 +17,99 @@ func NewHTTPAction() *HTTPAction {
 	}
 }
 
-// CheckAuth checks if HTTP requires authentication
-func (h *HTTPAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if HTTP requires authentication and potential vulnerabilities
+func (h *HTTPAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := h.CheckPort(h.Host, h.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: h.Timeout,
+	// Get banner to check version
+	_, version, err := h.GetBanner()
+	if err != nil {
+		return false, "", false, err
 	}
 
-	// Try to access a protected resource
-	url := fmt.Sprintf("http://%s:%d/admin", h.Host, h.Port)
-	resp, err := client.Get(url)
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "Apache/2.4.49") || strings.Contains(version, "Apache/2.4.50") {
+		vulnerable = true
+	}
+
+	// Run HTTP-specific auth detection
+	output, err := h.RunNmapScript(h.Host, h.Port, "http-auth")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "WWW-Authenticate") ||
+		strings.Contains(output, "Basic realm") ||
+		strings.Contains(output, "Digest realm")
+
+	return requiresAuth, fmt.Sprintf("HTTP %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for HTTP-specific vulnerabilities
+func (h *HTTPAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := h.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer resp.Body.Close()
 
-	// Check if authentication is required
-	requiresAuth := resp.StatusCode == http.StatusUnauthorized ||
-		resp.StatusCode == http.StatusForbidden ||
-		strings.Contains(resp.Header.Get("WWW-Authenticate"), "Basic") ||
-		strings.Contains(resp.Header.Get("WWW-Authenticate"), "Digest")
+	vulnerabilities := []string{}
 
-	return requiresAuth, fmt.Sprintf("HTTP Status: %d", resp.StatusCode), nil
+	// Check for known vulnerable versions
+	if strings.Contains(version, "Apache/2.4.49") || strings.Contains(version, "Apache/2.4.50") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version (CVE-2021-41773)")
+	}
+
+	// Check for common vulnerabilities
+	scripts := []string{
+		"http-vuln-cve2017-5638", // Struts vulnerability
+		"http-vuln-cve2017-8917", // Joomla vulnerability
+		"http-vuln-cve2018-7600", // Drupal vulnerability
+		"http-vuln-cve2019-2729", // Oracle WebLogic vulnerability
+		"http-vuln-cve2020-3452", // Cisco vulnerability
+	}
+
+	for _, script := range scripts {
+		output, err := h.RunNmapScript(h.Host, h.Port, script)
+		if err == nil && strings.Contains(output, "VULNERABLE") {
+			vulnerabilities = append(vulnerabilities, fmt.Sprintf("Vulnerable to %s", script))
+		}
+	}
+
+	// Check for default credentials
+	output, err := h.RunNmapScript(h.Host, h.Port, "http-default-accounts")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force HTTP credentials
 func (h *HTTPAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := h.ReadServiceWordlist("http")
+	// Run HTTP brute force script
+	output, err := h.RunNmapScript(h.Host, h.Port, "http-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"admin:admin",
-			"admin:password",
-			"admin:123456",
-			"root:root",
-			"root:password",
-			"root:123456",
-		}
+		return false, "", err
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: h.Timeout,
-	}
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	var success bool
-	var successInfo string
-
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		// Create request
-		url := fmt.Sprintf("http://%s:%d/admin", h.Host, h.Port)
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			continue
-		}
-
-		// Set basic auth
-		req.SetBasicAuth(username, password)
-
-		// Send request
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		resp.Body.Close()
-
-		// Check if authentication was successful
-		if resp.StatusCode == http.StatusOK {
-			success = true
-			successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-			break
-		}
-	}
-
-	if !success {
-		return false, "Failed to brute force HTTP with common credentials", nil
-	}
-
-	return true, successInfo, nil
+	return success, output, nil
 }

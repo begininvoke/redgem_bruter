@@ -14,7 +14,8 @@ import (
 
 // ServiceAction defines the interface for service-specific actions
 type ServiceAction interface {
-	CheckAuth() (bool, string, error)
+	CheckAuth() (bool, string, bool, error)
+	CheckVulnerability() (bool, string, error)
 	BruteForce() (bool, string, error)
 	GetBanner() (string, string, error)
 	SetHost(host string)
@@ -150,20 +151,20 @@ func extractVersion(banner string) string {
 }
 
 // CheckAuth is the default implementation for checking authentication
-func (b *BaseAction) CheckAuth() (bool, string, error) {
+func (b *BaseAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := b.CheckPort(b.Host, b.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
 	// Run a generic auth detection script
 	output, err := b.RunNmapScript(b.Host, b.Port, "auth-finder")
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 
 	// Check if authentication is required
@@ -172,7 +173,28 @@ func (b *BaseAction) CheckAuth() (bool, string, error) {
 		strings.Contains(output, "login") ||
 		strings.Contains(output, "password")
 
-	return requiresAuth, output, nil
+	return requiresAuth, output, false, nil
+}
+
+// CheckVulnerability is the default implementation for vulnerability checking
+func (b *BaseAction) CheckVulnerability() (bool, string, error) {
+	// Run a generic vulnerability scan
+	output, err := b.RunNmapScript(b.Host, b.Port, "vuln")
+	if err != nil {
+		return false, "", err
+	}
+
+	// Check for common vulnerability indicators
+	vulnerable := strings.Contains(output, "VULNERABLE") ||
+		strings.Contains(output, "vulnerable") ||
+		strings.Contains(output, "CVE") ||
+		strings.Contains(output, "exploit")
+
+	if vulnerable {
+		return true, output, nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce is the default implementation for brute force attempts

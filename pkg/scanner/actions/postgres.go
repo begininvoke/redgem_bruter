@@ -1,14 +1,13 @@
 package actions
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 
 	_ "github.com/lib/pq"
 )
 
-// PostgresAction implements PostgreSQL-specific actions
+// PostgresAction implements PostgreSQL service scanning
 type PostgresAction struct {
 	BaseAction
 }
@@ -20,84 +19,88 @@ func NewPostgresAction() *PostgresAction {
 	}
 }
 
-// CheckAuth checks if PostgreSQL requires authentication
-func (p *PostgresAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if PostgreSQL requires authentication and potential vulnerabilities
+func (p *PostgresAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := p.CheckPort(p.Host, p.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Run PostgreSQL auth script
-	output, err := p.RunNmapScript(p.Host, p.Port, "pgsql-info")
+	// Get banner to check version
+	_, version, err := p.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "9.3") || strings.Contains(version, "9.4") {
+		vulnerable = true
+	}
+
+	// Run PostgreSQL-specific auth detection
+	output, err := p.RunNmapScript(p.Host, p.Port, "pgsql-brute")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "password required") ||
+		strings.Contains(output, "md5")
+
+	return requiresAuth, fmt.Sprintf("PostgreSQL %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for PostgreSQL-specific vulnerabilities
+func (p *PostgresAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := p.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
 
-	// PostgreSQL typically requires authentication
-	return true, output, nil
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "9.3") || strings.Contains(version, "9.4") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
+	}
+
+	// Check for anonymous access
+	output, err := p.RunNmapScript(p.Host, p.Port, "pgsql-brute")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
+	}
+
+	// Check for default credentials
+	output, err = p.RunNmapScript(p.Host, p.Port, "pgsql-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
-// BruteForce attempts to brute force PostgreSQL
+// BruteForce attempts to brute force PostgreSQL credentials
 func (p *PostgresAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := p.ReadServiceWordlist("postgres")
+	// Run PostgreSQL brute force script
+	output, err := p.RunNmapScript(p.Host, p.Port, "pgsql-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"postgres:postgres",
-			"postgres:admin",
-			"postgres:password",
-			"postgres:123456",
-			"admin:admin",
-			"admin:password",
-			"admin:123456",
-		}
+		return false, "", err
 	}
 
-	var success bool
-	var successInfo string
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=disable connect_timeout=%d",
-			p.Host,
-			p.Port,
-			username,
-			password,
-			int(p.Timeout.Seconds()))
-
-		db, err := sql.Open("postgres", connStr)
-		if err != nil {
-			continue
-		}
-
-		// Set connection timeout
-		db.SetConnMaxLifetime(p.Timeout)
-
-		// Try to ping the database
-		err = db.Ping()
-		if err == nil {
-			db.Close()
-			success = true
-			successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-			break
-		}
-		db.Close()
-	}
-
-	if !success {
-		return false, "Failed to brute force PostgreSQL with common credentials", nil
-	}
-
-	return true, successInfo, nil
+	return success, output, nil
 }

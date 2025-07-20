@@ -1,9 +1,7 @@
 package actions
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 )
 
@@ -19,104 +17,88 @@ func NewElasticsearchAction() *ElasticsearchAction {
 	}
 }
 
-// CheckAuth checks if Elasticsearch requires authentication
-func (e *ElasticsearchAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if Elasticsearch requires authentication and potential vulnerabilities
+func (e *ElasticsearchAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := e.CheckPort(e.Host, e.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: e.Timeout,
+	// Get banner to check version
+	_, version, err := e.GetBanner()
+	if err != nil {
+		return false, "", false, err
 	}
 
-	// Try to access Elasticsearch
-	url := fmt.Sprintf("http://%s:%d/_cluster/health", e.Host, e.Port)
-	resp, err := client.Get(url)
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "1.4") || strings.Contains(version, "1.5") {
+		vulnerable = true
+	}
+
+	// Run Elasticsearch-specific auth detection
+	output, err := e.RunNmapScript(e.Host, e.Port, "elasticsearch-info")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "security") ||
+		strings.Contains(output, "xpack")
+
+	return requiresAuth, fmt.Sprintf("Elasticsearch %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for Elasticsearch-specific vulnerabilities
+func (e *ElasticsearchAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := e.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer resp.Body.Close()
 
-	// Check if authentication is required
-	requiresAuth := resp.StatusCode == http.StatusUnauthorized ||
-		resp.StatusCode == http.StatusForbidden ||
-		strings.Contains(resp.Header.Get("WWW-Authenticate"), "Basic") ||
-		strings.Contains(resp.Header.Get("WWW-Authenticate"), "Digest")
+	vulnerabilities := []string{}
 
-	return requiresAuth, fmt.Sprintf("Elasticsearch Status: %d", resp.StatusCode), nil
+	// Check for known vulnerable versions
+	if strings.Contains(version, "1.4") || strings.Contains(version, "1.5") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
+	}
+
+	// Check for anonymous access
+	output, err := e.RunNmapScript(e.Host, e.Port, "elasticsearch-brute")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
+	}
+
+	// Check for default credentials
+	output, err = e.RunNmapScript(e.Host, e.Port, "elasticsearch-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force Elasticsearch credentials
 func (e *ElasticsearchAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := e.ReadServiceWordlist("elasticsearch")
+	// Run Elasticsearch brute force script
+	output, err := e.RunNmapScript(e.Host, e.Port, "elasticsearch-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"elastic:elastic",
-			"elastic:changeme",
-			"elastic:password",
-			"elastic:123456",
-			"admin:admin",
-			"admin:password",
-			"admin:123456",
-		}
+		return false, "", err
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: e.Timeout,
-	}
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	var success bool
-	var successInfo string
-
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		// Create request
-		url := fmt.Sprintf("http://%s:%d/_cluster/health", e.Host, e.Port)
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			continue
-		}
-
-		// Set basic auth
-		req.SetBasicAuth(username, password)
-
-		// Send request
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		defer resp.Body.Close()
-
-		// Check if authentication was successful
-		if resp.StatusCode == http.StatusOK {
-			// Try to parse the response to verify it's valid JSON
-			var result map[string]interface{}
-			if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-				success = true
-				successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-				break
-			}
-		}
-	}
-
-	if !success {
-		return false, "Failed to brute force Elasticsearch with common credentials", nil
-	}
-
-	return true, successInfo, nil
+	return success, output, nil
 }

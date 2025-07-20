@@ -1,14 +1,13 @@
 package actions
 
 import (
-	"database/sql"
 	"fmt"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// MySQLAction implements MySQL-specific actions
+// MySQLAction implements MySQL service scanning
 type MySQLAction struct {
 	BaseAction
 }
@@ -20,84 +19,87 @@ func NewMySQLAction() *MySQLAction {
 	}
 }
 
-// CheckAuth checks if MySQL requires authentication
-func (m *MySQLAction) CheckAuth() (bool, string, error) {
+// CheckAuth checks if MySQL requires authentication and potential vulnerabilities
+func (m *MySQLAction) CheckAuth() (bool, string, bool, error) {
 	// First check if port is open
 	open, err := m.CheckPort(m.Host, m.Port)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	if !open {
-		return false, "Port closed", nil
+		return false, "Port closed", false, nil
 	}
 
-	// Run MySQL auth script
+	// Get banner to check version
+	_, version, err := m.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "5.5") || strings.Contains(version, "5.6") {
+		vulnerable = true
+	}
+
+	// Run MySQL-specific auth detection
 	output, err := m.RunNmapScript(m.Host, m.Port, "mysql-info")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "Access denied")
+
+	return requiresAuth, fmt.Sprintf("MySQL %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for MySQL-specific vulnerabilities
+func (m *MySQLAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := m.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
 
-	// MySQL typically requires authentication
-	return true, output, nil
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "5.5") || strings.Contains(version, "5.6") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
+	}
+
+	// Check for anonymous access
+	output, err := m.RunNmapScript(m.Host, m.Port, "mysql-empty-password")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
+	}
+
+	// Check for default credentials
+	output, err = m.RunNmapScript(m.Host, m.Port, "mysql-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
-// BruteForce attempts to brute force MySQL
+// BruteForce attempts to brute force MySQL credentials
 func (m *MySQLAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := m.ReadServiceWordlist("mysql")
+	// Run MySQL brute force script
+	output, err := m.RunNmapScript(m.Host, m.Port, "mysql-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"root:root",
-			"root:",
-			"admin:admin",
-			"root:password",
-			"admin:password",
-			"root:123456",
-			"admin:123456",
-		}
+		return false, "", err
 	}
 
-	var success bool
-	var successInfo string
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		parts := strings.Split(cred, ":")
-		if len(parts) != 2 {
-			continue
-		}
-
-		username, password := parts[0], parts[1]
-
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/mysql?timeout=%ds",
-			username,
-			password,
-			m.Host,
-			m.Port,
-			int(m.Timeout.Seconds()))
-
-		db, err := sql.Open("mysql", dsn)
-		if err != nil {
-			continue
-		}
-
-		// Set connection timeout
-		db.SetConnMaxLifetime(m.Timeout)
-
-		// Try to ping the database
-		err = db.Ping()
-		if err == nil {
-			db.Close()
-			success = true
-			successInfo = fmt.Sprintf("Successfully authenticated with username: %s, password: %s", username, password)
-			break
-		}
-		db.Close()
-	}
-
-	if !success {
-		return false, "Failed to brute force MySQL with common credentials", nil
-	}
-
-	return true, successInfo, nil
+	return success, output, nil
 }

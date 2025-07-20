@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"redgem_bruter/pkg/scanner"
+	"time"
 
 	"strings"
 )
@@ -17,6 +18,7 @@ func main() {
 	outputFile := flag.String("o", "", "Output file for results (optional)")
 	format := flag.String("f", "text", "Output format (text, json, or csv)")
 	attack := flag.Bool("a", false, "Enable brute force attack mode")
+	timeout := flag.Duration("timeout", 30*time.Second, "Timeout for individual service checks")
 
 	flag.Parse()
 
@@ -24,6 +26,13 @@ func main() {
 	if *target == "" {
 		fmt.Println("Error: -target flag is required")
 		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Validate format
+	validFormats := map[string]bool{"text": true, "json": true, "csv": true}
+	if !validFormats[*format] {
+		fmt.Printf("Error: Invalid format '%s'. Valid formats are: text, json, csv\n", *format)
 		os.Exit(1)
 	}
 
@@ -83,6 +92,7 @@ func main() {
 	}
 	// Create scanner instance
 	s := scanner.NewScanner(*target, portList, *attack, *outputFile, *format)
+	s.SetTimeout(*timeout)
 
 	// Print scan information
 	fmt.Printf("Starting scan of %s (%s)\n", *target, s.IP)
@@ -96,6 +106,7 @@ func main() {
 	}
 
 	// Perform scan
+	fmt.Println("Starting port scan and service analysis...")
 	results, err := s.Scan()
 	if err != nil {
 		fmt.Printf("Error during scan: %v\n", err)

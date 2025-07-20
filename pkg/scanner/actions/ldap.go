@@ -3,10 +3,6 @@ package actions
 import (
 	"fmt"
 	"strings"
-	"sync"
-	"time"
-
-	"github.com/go-ldap/ldap/v3"
 )
 
 // LDAPAction implements LDAP service scanning
@@ -16,94 +12,99 @@ type LDAPAction struct {
 
 // NewLDAPAction creates a new LDAP action
 func NewLDAPAction() *LDAPAction {
-	return &LDAPAction{}
+	return &LDAPAction{
+		BaseAction: BaseAction{}, // Initialize without dereferencing
+	}
 }
 
-// CheckAuth checks if LDAP requires authentication
-func (l *LDAPAction) CheckAuth() (bool, string, error) {
-	conn, err := ldap.DialURL(fmt.Sprintf("ldap://%s:%d", l.Host, l.Port))
+// CheckAuth checks if LDAP requires authentication and potential vulnerabilities
+func (l *LDAPAction) CheckAuth() (bool, string, bool, error) {
+	// First check if port is open
+	open, err := l.CheckPort(l.Host, l.Port)
+	if err != nil {
+		return false, "", false, err
+	}
+	if !open {
+		return false, "Port closed", false, nil
+	}
+
+	// Get banner to check version
+	_, version, err := l.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "OpenLDAP 2.2") || strings.Contains(version, "OpenLDAP 2.3") {
+		vulnerable = true
+	}
+
+	// Run LDAP-specific auth detection
+	output, err := l.RunNmapScript(l.Host, l.Port, "ldap-rootdse")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "bind failed") ||
+		strings.Contains(output, "invalid credentials")
+
+	return requiresAuth, fmt.Sprintf("LDAP %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for LDAP-specific vulnerabilities
+func (l *LDAPAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := l.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer conn.Close()
 
-	// Try anonymous bind
-	err = conn.UnauthenticatedBind("")
-	if err == nil {
-		return false, "LDAP allows anonymous access", nil
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "OpenLDAP 2.2") || strings.Contains(version, "OpenLDAP 2.3") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	return true, "LDAP requires authentication", nil
+	// Check for anonymous access
+	output, err := l.RunNmapScript(l.Host, l.Port, "ldap-anon")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
+	}
+
+	// Check for default credentials
+	output, err = l.RunNmapScript(l.Host, l.Port, "ldap-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	// Check for null bind
+	output, err = l.RunNmapScript(l.Host, l.Port, "ldap-null")
+	if err == nil && strings.Contains(output, "VULNERABLE") {
+		vulnerabilities = append(vulnerabilities, "Null bind allowed")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force LDAP credentials
 func (l *LDAPAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := l.ReadServiceWordlist("ldap")
+	// Run LDAP brute force script
+	output, err := l.RunNmapScript(l.Host, l.Port, "ldap-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"cn=admin,dc=example,dc=com:admin",
-			"cn=root,dc=example,dc=com:root",
-			"cn=admin,dc=example,dc=com:password",
-			"cn=root,dc=example,dc=com:password",
-		}
+		return false, "", err
 	}
 
-	// Create a semaphore to limit concurrent attempts
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	var success bool
-	var successMsg string
-	var mu sync.Mutex
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		wg.Add(1)
-		go func(cred string) {
-			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
-
-			parts := strings.Split(cred, ":")
-			if len(parts) != 2 {
-				return
-			}
-
-			dn, password := parts[0], parts[1]
-
-			conn, err := ldap.DialURL(fmt.Sprintf("ldap://%s:%d", l.Host, l.Port))
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-
-			// Set timeout
-			conn.SetTimeout(5 * time.Second)
-
-			// Try simple bind
-			err = conn.Bind(dn, password)
-			if err == nil {
-				mu.Lock()
-				success = true
-				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s", dn, password)
-				mu.Unlock()
-				return
-			}
-
-			// Try SASL bind if simple bind fails
-			// Note: This is a simplified example. In a real implementation,
-			// you would need to handle different SASL mechanisms and their specific requirements.
-			err = conn.Bind(dn, password)
-			if err == nil {
-				mu.Lock()
-				success = true
-				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s using SASL", dn, password)
-				mu.Unlock()
-				return
-			}
-		}(cred)
-	}
-
-	wg.Wait()
-	return success, successMsg, nil
+	return success, output, nil
 }

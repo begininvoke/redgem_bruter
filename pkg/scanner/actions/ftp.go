@@ -1,12 +1,8 @@
 package actions
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"strings"
-	"sync"
-	"time"
 )
 
 // FTPAction implements FTP service scanning
@@ -21,114 +17,94 @@ func NewFTPAction() *FTPAction {
 	}
 }
 
-// CheckAuth checks if FTP requires authentication
-func (f *FTPAction) CheckAuth() (bool, string, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", f.Host, f.Port), 5*time.Second)
+// CheckAuth checks if FTP requires authentication and potential vulnerabilities
+func (f *FTPAction) CheckAuth() (bool, string, bool, error) {
+	// First check if port is open
+	open, err := f.CheckPort(f.Host, f.Port)
+	if err != nil {
+		return false, "", false, err
+	}
+	if !open {
+		return false, "Port closed", false, nil
+	}
+
+	// Get banner to check version
+	_, version, err := f.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "vsFTPd 2.3.2") || strings.Contains(version, "vsFTPd 2.3.4") {
+		vulnerable = true
+	}
+
+	// Run FTP-specific auth detection
+	output, err := f.RunNmapScript(f.Host, f.Port, "ftp-anon")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "authentication required") ||
+		strings.Contains(output, "Login failed") ||
+		strings.Contains(output, "530")
+
+	return requiresAuth, fmt.Sprintf("FTP %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for FTP-specific vulnerabilities
+func (f *FTPAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := f.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "vsFTPd 2.3.2") || strings.Contains(version, "vsFTPd 2.3.4") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version (backdoor)")
 	}
 
-	// Try anonymous login
-	fmt.Fprintf(conn, "USER anonymous\r\n")
-	response, err = reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	// Check for anonymous access
+	output, err := f.RunNmapScript(f.Host, f.Port, "ftp-anon")
+	if err == nil && strings.Contains(output, "Anonymous access") {
+		vulnerabilities = append(vulnerabilities, "Anonymous access allowed")
 	}
 
-	fmt.Fprintf(conn, "PASS anonymous\r\n")
-	response, err = reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	// Check for default credentials
+	output, err = f.RunNmapScript(f.Host, f.Port, "ftp-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
 	}
 
-	if strings.Contains(response, "230") {
-		return false, "FTP allows anonymous access", nil
+	// Check for bounce attack vulnerability
+	output, err = f.RunNmapScript(f.Host, f.Port, "ftp-bounce")
+	if err == nil && strings.Contains(output, "VULNERABLE") {
+		vulnerabilities = append(vulnerabilities, "FTP bounce attack possible")
 	}
 
-	return true, "FTP requires authentication", nil
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force FTP credentials
 func (f *FTPAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := f.ReadServiceWordlist("ftp")
+	// Run FTP brute force script
+	output, err := f.RunNmapScript(f.Host, f.Port, "ftp-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"anonymous:anonymous",
-			"anonymous:ftp",
-			"anonymous:anonymous@",
-			"anonymous:ftp@",
-		}
+		return false, "", err
 	}
 
-	// Create a semaphore to limit concurrent attempts
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	var success bool
-	var successMsg string
-	var mu sync.Mutex
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		wg.Add(1)
-		go func(cred string) {
-			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
-
-			parts := strings.Split(cred, ":")
-			if len(parts) != 2 {
-				return
-			}
-
-			username, password := parts[0], parts[1]
-
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", f.Host, f.Port), 5*time.Second)
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-
-			reader := bufio.NewReader(conn)
-			_, err = reader.ReadString('\n') // Read welcome message
-			if err != nil {
-				return
-			}
-
-			// Send username
-			fmt.Fprintf(conn, "USER %s\r\n", username)
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			if !strings.HasPrefix(response, "331") {
-				return
-			}
-
-			// Send password
-			fmt.Fprintf(conn, "PASS %s\r\n", password)
-			response, err = reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			if strings.HasPrefix(response, "230") {
-				mu.Lock()
-				success = true
-				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s", username, password)
-				mu.Unlock()
-			}
-		}(cred)
-	}
-
-	wg.Wait()
-	return success, successMsg, nil
+	return success, output, nil
 }

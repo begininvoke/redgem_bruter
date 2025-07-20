@@ -1,12 +1,8 @@
 package actions
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"strings"
-	"sync"
-	"time"
 )
 
 // TelnetAction implements Telnet service scanning
@@ -16,107 +12,93 @@ type TelnetAction struct {
 
 // NewTelnetAction creates a new Telnet action
 func NewTelnetAction() *TelnetAction {
-	return &TelnetAction{}
+	return &TelnetAction{
+		BaseAction: *NewBaseAction(),
+	}
 }
 
-// CheckAuth checks if Telnet requires authentication
-func (t *TelnetAction) CheckAuth() (bool, string, error) {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", t.Host, t.Port), 5*time.Second)
+// CheckAuth checks if Telnet requires authentication and potential vulnerabilities
+func (t *TelnetAction) CheckAuth() (bool, string, bool, error) {
+	// First check if port is open
+	open, err := t.CheckPort(t.Host, t.Port)
+	if err != nil {
+		return false, "", false, err
+	}
+	if !open {
+		return false, "Port closed", false, nil
+	}
+
+	// Get banner to check version
+	_, version, err := t.GetBanner()
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check for known vulnerable versions
+	vulnerable := false
+	if strings.Contains(version, "BSD") || strings.Contains(version, "Linux") {
+		vulnerable = true
+	}
+
+	// Run Telnet-specific auth detection
+	output, err := t.RunNmapScript(t.Host, t.Port, "telnet-encryption")
+	if err != nil {
+		return false, "", false, err
+	}
+
+	// Check if authentication is required
+	requiresAuth := strings.Contains(output, "Login required") ||
+		strings.Contains(output, "Username:") ||
+		strings.Contains(output, "Password:")
+
+	return requiresAuth, fmt.Sprintf("Telnet %s - %s", version, output), vulnerable, nil
+}
+
+// CheckVulnerability checks for Telnet-specific vulnerabilities
+func (t *TelnetAction) CheckVulnerability() (bool, string, error) {
+	// Get version
+	_, version, err := t.GetBanner()
 	if err != nil {
 		return false, "", err
 	}
-	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		return false, "", err
+	vulnerabilities := []string{}
+
+	// Check for known vulnerable versions
+	if strings.Contains(version, "BSD") || strings.Contains(version, "Linux") {
+		vulnerabilities = append(vulnerabilities, "Known vulnerable version")
 	}
 
-	// Check if login prompt is present
-	if strings.Contains(strings.ToLower(response), "login") {
-		return true, "Telnet requires authentication", nil
+	// Check for encryption
+	output, err := t.RunNmapScript(t.Host, t.Port, "telnet-encryption")
+	if err == nil && strings.Contains(output, "No encryption") {
+		vulnerabilities = append(vulnerabilities, "No encryption (credentials sent in plaintext)")
 	}
 
-	return false, "Telnet does not require authentication", nil
+	// Check for default credentials
+	output, err = t.RunNmapScript(t.Host, t.Port, "telnet-brute")
+	if err == nil && strings.Contains(output, "Valid credentials") {
+		vulnerabilities = append(vulnerabilities, "Default credentials found")
+	}
+
+	if len(vulnerabilities) > 0 {
+		return true, fmt.Sprintf("Vulnerabilities found: %s", strings.Join(vulnerabilities, ", ")), nil
+	}
+
+	return false, "No obvious vulnerabilities detected", nil
 }
 
 // BruteForce attempts to brute force Telnet credentials
 func (t *TelnetAction) BruteForce() (bool, string, error) {
-	// Try to read from service-specific wordlist first
-	credentials, err := t.ReadServiceWordlist("telnet")
+	// Run Telnet brute force script
+	output, err := t.RunNmapScript(t.Host, t.Port, "telnet-brute")
 	if err != nil {
-		// Fall back to default credentials if wordlist is not available
-		credentials = []string{
-			"root:root",
-			"admin:admin",
-			"root:password",
-			"admin:password",
-		}
+		return false, "", err
 	}
 
-	// Create a semaphore to limit concurrent attempts
-	sem := make(chan struct{}, 5)
-	var wg sync.WaitGroup
-	var success bool
-	var successMsg string
-	var mu sync.Mutex
+	// Check if brute force was successful
+	success := strings.Contains(output, "Valid credentials") ||
+		strings.Contains(output, "Login successful")
 
-	for _, cred := range credentials {
-		wg.Add(1)
-		go func(cred string) {
-			defer wg.Done()
-			sem <- struct{}{}        // Acquire semaphore
-			defer func() { <-sem }() // Release semaphore
-
-			parts := strings.Split(cred, ":")
-			if len(parts) != 2 {
-				return
-			}
-
-			username, password := parts[0], parts[1]
-
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", t.Host, t.Port), 5*time.Second)
-			if err != nil {
-				return
-			}
-			defer conn.Close()
-
-			reader := bufio.NewReader(conn)
-			_, err = reader.ReadString('\n') // Read welcome message
-			if err != nil {
-				return
-			}
-
-			// Send username
-			fmt.Fprintf(conn, "%s\r\n", username)
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			// Check for password prompt
-			if !strings.Contains(strings.ToLower(response), "password") {
-				return
-			}
-
-			// Send password
-			fmt.Fprintf(conn, "%s\r\n", password)
-			response, err = reader.ReadString('\n')
-			if err != nil {
-				return
-			}
-
-			// Check for successful login
-			if !strings.Contains(strings.ToLower(response), "incorrect") && !strings.Contains(strings.ToLower(response), "invalid") {
-				mu.Lock()
-				success = true
-				successMsg = fmt.Sprintf("Successfully authenticated with %s:%s", username, password)
-				mu.Unlock()
-			}
-		}(cred)
-	}
-
-	wg.Wait()
-	return success, successMsg, nil
+	return success, output, nil
 }
