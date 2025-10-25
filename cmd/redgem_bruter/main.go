@@ -99,10 +99,10 @@ func main() {
 	if len(portList) > 0 {
 		fmt.Printf("Scanning ports: %v\n", portList)
 	} else {
-		fmt.Println("No specific ports provided. Scanning all known service ports:")
-		for serviceName, service := range s.Services {
-			fmt.Printf("- %s (%s): %v\n", serviceName, service.Description, service.Ports)
-		}
+		fmt.Println("No specific ports provided. Scanning all known service ports")
+		// for serviceName, service := range s.Services {
+		// 	fmt.Printf("- %s (%s): %v\n", serviceName, service.Description, service.Ports)
+		// }
 	}
 
 	// Perform scan

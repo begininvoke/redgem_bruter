@@ -281,7 +281,7 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 	}
 	s.Ports = uniquePorts
 
-	fmt.Printf("Scanning %d unique ports: %v\n", len(s.Ports), s.Ports)
+	fmt.Printf("Scanning %d \n", len(s.Ports))
 
 	// Create a map of ports to scan for quick lookup
 	portsToScan := make(map[int]bool)
@@ -319,11 +319,11 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 	}
 
 	// Scan only the relevant services
-	serviceCount := len(servicesToScan)
+	//طسserviceCount := len(servicesToScan)
 	currentService := 0
 	for _, service := range servicesToScan {
 		currentService++
-		fmt.Printf("Scanning service %d/%d: %s (port: %d)\n", currentService, serviceCount, service.Name, service.Ports[0])
+		// fmt.Printf("Scanning service %d/%d: %s (port: %d)\n", currentService, serviceCount, service.Name, service.Ports[0])
 
 		result, err := s.ScanPort(service)
 		if err != nil {
