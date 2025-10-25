@@ -46,10 +46,19 @@ func (e *ElasticsearchAction) CheckAuth() (bool, string, bool, error) {
 		return false, "", false, err
 	}
 
-	// Check if authentication is required
+	// Check if authentication is required - Elasticsearch typically requires auth by default
+	// unless explicitly configured for anonymous access
 	requiresAuth := strings.Contains(output, "authentication required") ||
 		strings.Contains(output, "security") ||
-		strings.Contains(output, "xpack")
+		strings.Contains(output, "xpack") ||
+		strings.Contains(output, "authentication") ||
+		strings.Contains(output, "login") ||
+		strings.Contains(output, "credentials")
+
+	// If nmap script doesn't provide clear info, assume auth is required (default Elasticsearch behavior)
+	if !strings.Contains(output, "anonymous") && !strings.Contains(output, "no auth") {
+		requiresAuth = true
+	}
 
 	return requiresAuth, fmt.Sprintf("Elasticsearch %s - %s", version, output), vulnerable, nil
 }

@@ -46,10 +46,18 @@ func (r *RabbitMQAction) CheckAuth() (bool, string, bool, error) {
 		return false, "", false, err
 	}
 
-	// Check if authentication is required
+	// Check if authentication is required - RabbitMQ typically requires auth by default
 	requiresAuth := strings.Contains(output, "authentication required") ||
 		strings.Contains(output, "login required") ||
-		strings.Contains(output, "credentials required")
+		strings.Contains(output, "credentials required") ||
+		strings.Contains(output, "authentication") ||
+		strings.Contains(output, "login") ||
+		strings.Contains(output, "credentials")
+
+	// If nmap script doesn't provide clear info, assume auth is required (default RabbitMQ behavior)
+	if !strings.Contains(output, "anonymous") && !strings.Contains(output, "no auth") && !strings.Contains(output, "guest") {
+		requiresAuth = true
+	}
 
 	return requiresAuth, fmt.Sprintf("RabbitMQ %s - %s", version, output), vulnerable, nil
 }

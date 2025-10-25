@@ -161,17 +161,43 @@ func (b *BaseAction) CheckAuth() (bool, string, bool, error) {
 		return false, "Port closed", false, nil
 	}
 
+	// Try to get banner first to see if it indicates authentication
+	banner, _, err := b.GetBanner()
+	if err == nil && banner != "" {
+		// Check banner for authentication indicators
+		if strings.Contains(strings.ToLower(banner), "authentication") ||
+			strings.Contains(strings.ToLower(banner), "login") ||
+			strings.Contains(strings.ToLower(banner), "password") ||
+			strings.Contains(strings.ToLower(banner), "credentials") {
+			return true, fmt.Sprintf("Authentication indicated in banner: %s", banner), false, nil
+		}
+	}
+
 	// Run a generic auth detection script
 	output, err := b.RunNmapScript(b.Host, b.Port, "auth-finder")
 	if err != nil {
-		return false, "", false, err
+		// If nmap script fails, try alternative approach
+		output, err = b.RunNmapScript(b.Host, b.Port, "banner")
+		if err != nil {
+			return false, "", false, err
+		}
 	}
 
 	// Check if authentication is required
 	requiresAuth := strings.Contains(output, "authentication required") ||
 		strings.Contains(output, "auth") ||
 		strings.Contains(output, "login") ||
-		strings.Contains(output, "password")
+		strings.Contains(output, "password") ||
+		strings.Contains(output, "credentials") ||
+		strings.Contains(output, "WWW-Authenticate") ||
+		strings.Contains(output, "Basic realm") ||
+		strings.Contains(output, "Digest realm")
+
+	// If nmap script doesn't provide clear info, assume auth might be required
+	// This is a conservative approach for security-focused scanning
+	if !strings.Contains(output, "anonymous") && !strings.Contains(output, "no auth") && !strings.Contains(output, "public") {
+		requiresAuth = true
+	}
 
 	return requiresAuth, output, false, nil
 }

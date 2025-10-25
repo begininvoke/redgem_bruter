@@ -46,10 +46,21 @@ func (k *KibanaAction) CheckAuth() (bool, string, bool, error) {
 		return false, "", false, err
 	}
 
-	// Check if authentication is required
+	// Check if authentication is required - Kibana typically requires auth by default
 	requiresAuth := strings.Contains(output, "authentication required") ||
 		strings.Contains(output, "login required") ||
-		strings.Contains(output, "credentials required")
+		strings.Contains(output, "credentials required") ||
+		strings.Contains(output, "WWW-Authenticate") ||
+		strings.Contains(output, "Basic realm") ||
+		strings.Contains(output, "Digest realm") ||
+		strings.Contains(output, "authentication") ||
+		strings.Contains(output, "login") ||
+		strings.Contains(output, "credentials")
+
+	// If nmap script doesn't provide clear info, assume auth is required (default Kibana behavior)
+	if !strings.Contains(output, "anonymous") && !strings.Contains(output, "no auth") {
+		requiresAuth = true
+	}
 
 	return requiresAuth, fmt.Sprintf("Kibana %s - %s", version, output), vulnerable, nil
 }

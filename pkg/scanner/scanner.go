@@ -169,6 +169,19 @@ func (s *Scanner) ScanPort(service services.Service) (*ScanResult, error) {
 		// If service still not identified, use default port mapping
 		if result.Service == "" {
 			result.Service = service.Name
+		} else {
+			// If service was detected but doesn't match our expected service name,
+			// try to map it to the correct service based on port
+			if service.Name != "" && result.Service != service.Name {
+				// For specific services, prefer the expected service name
+				if service.Name == "elasticsearch" && result.Port == 9200 {
+					result.Service = "elasticsearch"
+				} else if service.Name == "kibana" && result.Port == 5601 {
+					result.Service = "kibana"
+				} else if service.Name == "rabbitmq" && result.Port == 5672 {
+					result.Service = "rabbitmq"
+				}
+			}
 		}
 	}
 
@@ -268,18 +281,53 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 	}
 	s.Ports = uniquePorts
 
-	fmt.Printf("Scanning %d unique ports...\n", len(s.Ports))
+	fmt.Printf("Scanning %d unique ports: %v\n", len(s.Ports), s.Ports)
 
-	// First, scan all services
-	serviceCount := len(s.Services)
+	// Create a map of ports to scan for quick lookup
+	portsToScan := make(map[int]bool)
+	for _, port := range s.Ports {
+		portsToScan[port] = true
+	}
+
+	// Only scan services that have ports in our target list
+	var servicesToScan []services.Service
+	for _, service := range s.Services {
+		for _, servicePort := range service.Ports {
+			if portsToScan[servicePort] {
+				// Create a service with only the matching port
+				serviceToScan := service
+				serviceToScan.Ports = []int{servicePort}
+				servicesToScan = append(servicesToScan, serviceToScan)
+				break
+			}
+		}
+	}
+
+	// If no services match the specified ports, scan the ports directly
+	if len(servicesToScan) == 0 {
+		fmt.Println("No known services match specified ports. Scanning ports directly...")
+		for _, port := range s.Ports {
+			// Create a generic service for unknown ports
+			genericService := services.Service{
+				Name:        "unknown",
+				Ports:       []int{port},
+				Protocol:    "tcp",
+				Description: "Unknown service",
+			}
+			servicesToScan = append(servicesToScan, genericService)
+		}
+	}
+
+	// Scan only the relevant services
+	serviceCount := len(servicesToScan)
 	currentService := 0
-	for serviceName, service := range s.Services {
+	for _, service := range servicesToScan {
 		currentService++
-		fmt.Printf("Scanning service %d/%d: %s (ports: %v)\n", currentService, serviceCount, serviceName, service.Ports)
+		fmt.Printf("Scanning service %d/%d: %s (port: %d)\n", currentService, serviceCount, service.Name, service.Ports[0])
 
 		result, err := s.ScanPort(service)
 		if err != nil {
-			fmt.Printf("Warning: Error scanning %s: %v\n", serviceName, err)
+			fmt.Printf("Warning: Error scanning %s on port %d: %v\n", service.Name, service.Ports[0], err)
 			continue
 		}
 		results = append(results, result)
