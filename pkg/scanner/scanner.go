@@ -246,13 +246,18 @@ func (s *Scanner) AttackService(result *ScanResult) error {
 		return fmt.Errorf("brute force failed for %s on port %d: %v", result.Service, result.Port, err)
 	}
 
-	if success {
-		result.Info += "\nBrute force successful: " + bruteInfo
-		result.Vulnerable = true
-		if result.VulnDescription == "" {
-			result.VulnDescription = "Brute force attack successful"
+	// Add brute force information regardless of success
+	if bruteInfo != "" {
+		if success {
+			result.Info += "\nBrute force successful: " + bruteInfo
+			result.Vulnerable = true
+			if result.VulnDescription == "" {
+				result.VulnDescription = "Brute force attack successful"
+			} else {
+				result.VulnDescription += "; Brute force attack successful"
+			}
 		} else {
-			result.VulnDescription += "; Brute force attack successful"
+			result.Info += "\nBrute force attempted: " + bruteInfo
 		}
 	}
 

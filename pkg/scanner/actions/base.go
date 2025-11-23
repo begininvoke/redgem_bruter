@@ -33,8 +33,8 @@ type BaseAction struct {
 // NewBaseAction creates a new BaseAction with default timeout
 func NewBaseAction() *BaseAction {
 	return &BaseAction{
-		Timeout:     5 * time.Second,
-		nmapScanner: nmap.NewNmapScanner(5 * time.Second),
+		Timeout:     30 * time.Second, // Increased for brute force operations
+		nmapScanner: nmap.NewNmapScanner(30 * time.Second),
 	}
 }
 

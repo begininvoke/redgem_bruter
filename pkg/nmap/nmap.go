@@ -3,6 +3,7 @@ package nmap
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Ullaakut/nmap/v3"
@@ -63,16 +64,27 @@ func (n *NmapScanner) ScanPorts(host string, ports []int) ([]int, error) {
 
 // RunNmapScript runs an Nmap script and returns the output
 func (n *NmapScanner) RunNmapScript(host string, port int, script string) (map[string]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), n.Timeout)
+	// Use a longer timeout for brute force scripts
+	timeout := n.Timeout
+	if strings.Contains(script, "brute") {
+		timeout = timeout * 3 // Triple the timeout for brute force operations
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Create nmap scanner
+	// Create nmap scanner with appropriate timing
+	timingTemplate := nmap.TimingAggressive
+	if strings.Contains(script, "brute") {
+		timingTemplate = nmap.TimingNormal // Use normal timing for brute force to avoid being too aggressive
+	}
+
 	scanner, err := nmap.NewScanner(
 		ctx,
 		nmap.WithTargets(host),
 		nmap.WithPorts(fmt.Sprintf("%d", port)),
 		nmap.WithScripts(script),
-		nmap.WithTimingTemplate(nmap.TimingAggressive),
+		nmap.WithTimingTemplate(timingTemplate),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create nmap scanner: %v", err)
