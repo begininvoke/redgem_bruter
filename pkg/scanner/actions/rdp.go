@@ -99,7 +99,7 @@ func (r *RDPAction) CheckVulnerability() (bool, string, error) {
 // BruteForce attempts to brute force RDP credentials
 func (r *RDPAction) BruteForce() (bool, string, error) {
 	var results []string
-	
+
 	// First, test credentials from RDP wordlist
 	wordlistSuccess, wordlistOutput := r.testRDPCredentials()
 	if wordlistSuccess {
@@ -153,7 +153,7 @@ func (r *RDPAction) testRDPCredentials() (bool, string) {
 
 	var results []string
 	successCount := 0
-	
+
 	// Limit the number of credentials to test to avoid long delays
 	maxCredentials := 8
 	if len(credentials) > maxCredentials {
@@ -166,14 +166,14 @@ func (r *RDPAction) testRDPCredentials() (bool, string) {
 		if len(parts) != 2 {
 			continue // Skip malformed lines
 		}
-		
+
 		username, password := parts[0], parts[1]
 		success, message := r.testRDPConnection(username, password)
-		
+
 		if success {
-			return true, fmt.Sprintf("RDP login successful with %s:%s - %s", username, password, message)
+			return true, fmt.Sprintf("RDP login successful with %s:%s - %s [CREDS:%s:%s]", username, password, message, username, password)
 		}
-		
+
 		results = append(results, fmt.Sprintf("%s:%s - %s", username, password, message))
 		successCount++
 	}
@@ -185,7 +185,7 @@ func (r *RDPAction) testRDPCredentials() (bool, string) {
 func (r *RDPAction) testRDPConnection(username, password string) (bool, string) {
 	// For RDP, we'll do a basic connection test to see if the port responds properly
 	// Full RDP authentication would require a complex RDP client implementation
-	
+
 	addr := net.JoinHostPort(r.Host, fmt.Sprintf("%d", r.Port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
@@ -201,7 +201,7 @@ func (r *RDPAction) testRDPConnection(username, password string) (bool, string) 
 
 	// Set read deadline
 	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-	
+
 	// Try to read RDP handshake response
 	buffer := make([]byte, 1024)
 	n, err := conn.Read(buffer)
@@ -211,11 +211,11 @@ func (r *RDPAction) testRDPConnection(username, password string) (bool, string) 
 	}
 
 	response := string(buffer[:n])
-	
+
 	// Check for RDP-specific responses
-	if strings.Contains(response, "RDP") || 
-	   strings.Contains(response, "Terminal") ||
-	   len(response) > 10 { // RDP typically sends binary data
+	if strings.Contains(response, "RDP") ||
+		strings.Contains(response, "Terminal") ||
+		len(response) > 10 { // RDP typically sends binary data
 		return false, "RDP service confirmed, credentials not verified (requires full RDP client)"
 	}
 

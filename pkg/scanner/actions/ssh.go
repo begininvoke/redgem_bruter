@@ -180,7 +180,7 @@ func (s *SSHAction) testHardcodedCredentials() (bool, string) {
 		success, message := s.testSSHLogin(username, password)
 
 		if success {
-			return true, fmt.Sprintf("SSH login successful with %s:%s - %s", username, password, message)
+			return true, fmt.Sprintf("SSH login successful with %s:%s - %s [CREDS:%s:%s]", username, password, message, username, password)
 		}
 
 		results = append(results, fmt.Sprintf("%s:%s - %s", username, password, message))
