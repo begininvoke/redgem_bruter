@@ -256,7 +256,7 @@ func (s *Scanner) AttackService(result *ScanResult) error {
 			} else {
 				result.VulnDescription += "; Brute force attack successful"
 			}
-			
+
 			// Extract credentials from brute force info if available
 			if strings.Contains(bruteInfo, "[CREDS:") {
 				// Parse credentials from format [CREDS:username:password]
