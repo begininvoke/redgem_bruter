@@ -22,13 +22,15 @@ func NewSSHAction() *SSHAction {
 
 // CheckAuth checks if SSH requires authentication and potential vulnerabilities
 func (s *SSHAction) CheckAuth() (bool, string, bool, error) {
-	// First check if port is open
+	// First check if port is open, but continue even if it appears filtered
 	open, err := s.CheckPort(s.Host, s.Port)
 	if err != nil {
-		return false, "", false, err
+		// If port check fails, still try to connect directly (might be filtered but accessible)
+		return s.checkAuthDirect()
 	}
 	if !open {
-		return false, "Port closed", false, nil
+		// Port appears closed/filtered, but try direct connection anyway
+		return s.checkAuthDirect()
 	}
 
 	// Get banner to check version and potential vulnerabilities
@@ -55,6 +57,113 @@ func (s *SSHAction) CheckAuth() (bool, string, bool, error) {
 		strings.Contains(output, "keyboard-interactive")
 
 	return requiresAuth, fmt.Sprintf("SSH %s - %s", version, output), vulnerable, nil
+}
+
+// checkAuthDirect performs direct SSH connection testing when port scanning is unreliable
+func (s *SSHAction) checkAuthDirect() (bool, string, bool, error) {
+	// Try a direct SSH connection with invalid credentials to test if SSH is running
+	config := &ssh.ClientConfig{
+		User: "nonexistent_user_test",
+		Auth: []ssh.AuthMethod{
+			ssh.Password("invalid_password_test"),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
+	client, err := ssh.Dial("tcp", addr, config)
+	if client != nil {
+		client.Close()
+	}
+
+	if err != nil {
+		errStr := err.Error()
+
+		// If we get authentication errors, SSH service is confirmed running
+		if strings.Contains(errStr, "authentication failed") ||
+			strings.Contains(errStr, "permission denied") ||
+			strings.Contains(errStr, "unable to authenticate") {
+			return true, fmt.Sprintf("SSH service confirmed via direct connection test - %s", errStr), false, nil
+		}
+
+		// Connection timeouts might mean firewall/filtering - assume auth required for security
+		if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "i/o timeout") {
+			return true, fmt.Sprintf("SSH service likely present but filtered/firewalled - %s", errStr), false, nil
+		}
+
+		// Connection refused means service is definitely not running
+		if strings.Contains(errStr, "connection refused") ||
+			strings.Contains(errStr, "network is unreachable") {
+			return false, fmt.Sprintf("SSH service not accessible - %s", errStr), false, nil
+		}
+
+		// Other SSH protocol errors still indicate SSH service presence
+		if strings.Contains(errStr, "ssh:") {
+			return true, fmt.Sprintf("SSH service detected with protocol issues - %s", errStr), false, nil
+		}
+	}
+
+	// If no error, authentication somehow succeeded (very unlikely with test credentials)
+	return true, "SSH service confirmed - test authentication unexpectedly succeeded", false, nil
+}
+
+// getHardcodedSSHCredentials returns a hardcoded list of SSH credentials
+func (s *SSHAction) getHardcodedSSHCredentials() []string {
+	return []string{
+		// Most common SSH credentials - PRIORITY ORDER
+
+		"admin:123456",
+		"user:123456",
+		"root:password",
+		"admin:password",
+		"root:root",
+		"admin:admin",
+		"root:toor",
+		"root:",
+		"admin:",
+		"root:123456",
+		"user:password",
+		"user:user",
+		"user:",
+		// Distribution-specific defaults
+		"ubuntu:ubuntu",
+		"ubuntu:123456",
+		"centos:centos",
+		"debian:debian",
+		"fedora:fedora",
+		"pi:raspberry",
+		"pi:123456",
+		// Service accounts
+		"oracle:oracle",
+		"postgres:postgres",
+		"mysql:mysql",
+		"redis:redis",
+		"mongodb:mongodb",
+		"elasticsearch:elasticsearch",
+		// Common service users
+		"backup:backup",
+		"service:service",
+		"support:support",
+		"operator:operator",
+		"manager:manager",
+		"developer:developer",
+		"webmaster:webmaster",
+		"devops:123456",
+		"devops:devops",
+		// Test accounts
+		"test:test",
+		"demo:demo",
+		"guest:guest",
+		"anonymous:",
+		// Weak passwords
+		"root:qwerty",
+		"admin:qwerty",
+		"root:12345",
+		"admin:12345",
+		"root:letmein",
+		"admin:letmein",
+	}
 }
 
 // CheckVulnerability checks for SSH-specific vulnerabilities
@@ -148,28 +257,32 @@ func (s *SSHAction) BruteForce() (bool, string, error) {
 	return false, strings.Join(results, "; "), nil
 }
 
-// testHardcodedCredentials tests credentials from SSH wordlist using direct SSH connection
+// testHardcodedCredentials tests credentials from SSH wordlist or hardcoded fallback
 func (s *SSHAction) testHardcodedCredentials() (bool, string) {
-	// Read credentials from SSH wordlist file
-	credentials, err := s.ReadServiceWordlist("ssh")
-	if err != nil {
-		return false, fmt.Sprintf("Failed to read SSH wordlist: %v", err)
-	}
+	var credentials []string
 
-	if len(credentials) == 0 {
-		return false, "SSH wordlist is empty"
+	// Try to read credentials from SSH wordlist file
+	wordlistCreds, err := s.ReadServiceWordlist("ssh")
+	if err != nil {
+		// Fallback to hardcoded credentials when wordlist fails
+		credentials = s.getHardcodedSSHCredentials()
+	} else if len(wordlistCreds) == 0 {
+		// Fallback to hardcoded credentials when wordlist is empty
+		credentials = s.getHardcodedSSHCredentials()
+	} else {
+		credentials = wordlistCreds
 	}
 
 	var results []string
 	successCount := 0
 
 	// Limit the number of credentials to test to avoid long delays
-	maxCredentials := 10
+	maxCredentials := 1000
 	if len(credentials) > maxCredentials {
 		credentials = credentials[:maxCredentials]
 	}
 
-	for _, credLine := range credentials {
+	for i, credLine := range credentials {
 		// Parse username:password format
 		parts := strings.Split(strings.TrimSpace(credLine), ":")
 		if len(parts) != 2 {
@@ -177,29 +290,39 @@ func (s *SSHAction) testHardcodedCredentials() (bool, string) {
 		}
 
 		username, password := parts[0], parts[1]
+
+		// Debug output to show what we're testing
+		fmt.Printf("Testing SSH credential %d/%d: %s:%s\n", i+1, len(credentials), username, password)
+
+		// Test each credential with a fresh SSH connection
 		success, message := s.testSSHLogin(username, password)
 
 		if success {
+			// Found valid credentials!
+			fmt.Printf("✅ SUCCESS! Found valid SSH credentials: %s:%s\n", username, password)
 			return true, fmt.Sprintf("SSH login successful with %s:%s - %s [CREDS:%s:%s]", username, password, message, username, password)
 		}
 
 		results = append(results, fmt.Sprintf("%s:%s - %s", username, password, message))
 		successCount++
+
+		// Small delay between attempts to avoid overwhelming the target
+		time.Sleep(100 * time.Millisecond)
 	}
 
-	return false, fmt.Sprintf("SSH wordlist tested (%d credentials): %s", successCount, strings.Join(results, "; "))
+	return false, fmt.Sprintf("SSH wordlist tested (%d credentials from %d total): %s", successCount, len(credentials), strings.Join(results, "; "))
 }
 
 // testSSHLogin attempts to login to SSH with specific credentials
 func (s *SSHAction) testSSHLogin(username, password string) (bool, string) {
-	// Create SSH client configuration
+	// Create SSH client configuration with more aggressive settings
 	config := &ssh.ClientConfig{
 		User: username,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // For testing purposes
-		Timeout:         5 * time.Second,
+		Timeout:         10 * time.Second,            // Increased timeout for filtered ports
 	}
 
 	// Attempt to connect
@@ -207,16 +330,34 @@ func (s *SSHAction) testSSHLogin(username, password string) (bool, string) {
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
 		// Check error type to determine what happened
-		if strings.Contains(err.Error(), "authentication failed") ||
-			strings.Contains(err.Error(), "permission denied") {
-			return false, "authentication failed"
+		errStr := err.Error()
+
+		// Authentication failed - this means SSH is working but credentials are wrong
+		if strings.Contains(errStr, "authentication failed") ||
+			strings.Contains(errStr, "permission denied") ||
+			strings.Contains(errStr, "unable to authenticate") {
+			return false, "authentication failed (SSH service confirmed)"
 		}
-		if strings.Contains(err.Error(), "connection refused") {
+
+		// Connection issues
+		if strings.Contains(errStr, "connection refused") {
 			return false, "connection refused"
 		}
-		if strings.Contains(err.Error(), "timeout") {
-			return false, "connection timeout"
+		if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "i/o timeout") {
+			return false, "connection timeout (firewall/filtered)"
 		}
+		if strings.Contains(errStr, "network is unreachable") {
+			return false, "network unreachable"
+		}
+		if strings.Contains(errStr, "no route to host") {
+			return false, "no route to host"
+		}
+
+		// SSH protocol errors (still indicates SSH service is present)
+		if strings.Contains(errStr, "ssh:") {
+			return false, fmt.Sprintf("SSH protocol error: %v", err)
+		}
+
 		return false, fmt.Sprintf("connection error: %v", err)
 	}
 

@@ -1,12 +1,13 @@
-root:123456
 admin:123456
 user:123456
+ubuntu:123456
 root:password
 admin:admin
 root:root
 devops:123456
 ubuntu:ubuntu
 pi:raspberry
+root:123456
 admin:password
 guest:guest
 test:test

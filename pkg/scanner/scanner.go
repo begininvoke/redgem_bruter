@@ -140,10 +140,19 @@ func (s *Scanner) ScanPort(service services.Service) (*ScanResult, error) {
 	}
 
 	if !open {
-		return result, nil
+		// For SSH service, try to force connection even if port appears closed/filtered
+		if service.Name == "SSH" || service.Name == "ssh" {
+			// SSH port appears filtered/closed, but forcing SSH service test
+			result.Service = "ssh"
+			result.Open = true // Mark as open so it gets processed
+			// Continue with SSH-specific checks even if port appears closed
+		} else {
+			// Port appears closed, skipping
+			return result, nil
+		}
+	} else {
+		result.Open = true
 	}
-
-	result.Open = true
 
 	// Try to detect service using nmap
 	detectedService, version, err := s.detectService(service.Ports[0])
@@ -321,6 +330,7 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 				serviceToScan := service
 				serviceToScan.Ports = []int{servicePort}
 				servicesToScan = append(servicesToScan, serviceToScan)
+				// Service matched for port
 				break
 			}
 		}
@@ -330,12 +340,23 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 	if len(servicesToScan) == 0 {
 		fmt.Println("No known services match specified ports. Scanning ports directly...")
 		for _, port := range s.Ports {
-			// Create a generic service for unknown ports
+			// Create a generic service for unknown ports, but check for common services
+			serviceName := "unknown"
+			if port == 22 {
+				serviceName = "ssh"
+			} else if port == 3389 {
+				serviceName = "rdp"
+			} else if port == 80 {
+				serviceName = "http"
+			} else if port == 443 {
+				serviceName = "https"
+			}
+
 			genericService := services.Service{
-				Name:        "unknown",
+				Name:        serviceName,
 				Ports:       []int{port},
 				Protocol:    "tcp",
-				Description: "Unknown service",
+				Description: fmt.Sprintf("Forced %s service scan", serviceName),
 			}
 			servicesToScan = append(servicesToScan, genericService)
 		}
@@ -346,7 +367,7 @@ func (s *Scanner) Scan() ([]*ScanResult, error) {
 	currentService := 0
 	for _, service := range servicesToScan {
 		currentService++
-		// fmt.Printf("Scanning service %d/%d: %s (port: %d)\n", currentService, serviceCount, service.Name, service.Ports[0])
+		// fmt.Printf("Scanning service %d: %s (port: %d)\n", currentService, service.Name, service.Ports[0])
 
 		result, err := s.ScanPort(service)
 		if err != nil {
