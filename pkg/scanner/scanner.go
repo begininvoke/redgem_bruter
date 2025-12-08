@@ -139,12 +139,14 @@ func (s *Scanner) ScanPort(service services.Service) (*ScanResult, error) {
 		return result, nil
 	}
 
+	forcedSSHTest := false
 	if !open {
 		// For SSH service, try to force connection even if port appears closed/filtered
 		if service.Name == "SSH" || service.Name == "ssh" {
 			// SSH port appears filtered/closed, but forcing SSH service test
 			result.Service = "ssh"
-			result.Open = true // Mark as open so it gets processed
+			forcedSSHTest = true
+			// DON'T mark as open yet - will determine after connection test
 			// Continue with SSH-specific checks even if port appears closed
 		} else {
 			// Port appears closed, skipping
@@ -210,6 +212,27 @@ func (s *Scanner) ScanPort(service services.Service) (*ScanResult, error) {
 		}
 		result.Auth = requiresAuth
 		result.Info = info
+		
+		// For forced SSH tests, check if service is actually accessible
+		if forcedSSHTest {
+			// Check if the connection actually worked
+			if strings.Contains(info, "connection refused") ||
+			   strings.Contains(info, "not accessible") ||
+			   (strings.Contains(info, "timeout") && !strings.Contains(info, "service confirmed")) {
+				// Service is not accessible - mark as closed
+				result.Open = false
+				result.Auth = false
+				result.Vulnerable = false
+				result.VulnDescription = ""
+				// SSH service is not accessible - marked as closed
+				// Don't continue with vulnerability checks for closed services
+				return result, nil
+			} else {
+				// Service responded (even if filtered) - mark as open
+				result.Open = true
+				// SSH service is accessible - marked as open
+			}
+		}
 
 		// Check for vulnerabilities - more sophisticated approach
 		if !requiresAuth {

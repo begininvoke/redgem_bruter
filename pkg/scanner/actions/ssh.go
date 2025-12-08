@@ -291,15 +291,14 @@ func (s *SSHAction) testHardcodedCredentials() (bool, string) {
 
 		username, password := parts[0], parts[1]
 
-		// Debug output to show what we're testing
-		fmt.Printf("Testing SSH credential %d/%d: %s:%s\n", i+1, len(credentials), username, password)
+		// Test each credential
+		fmt.Printf("Testing SSH %d/%d: %s:%s\n", i+1, len(credentials), username, password)
 
 		// Test each credential with a fresh SSH connection
 		success, message := s.testSSHLogin(username, password)
 
 		if success {
 			// Found valid credentials!
-			fmt.Printf("✅ SUCCESS! Found valid SSH credentials: %s:%s\n", username, password)
 			return true, fmt.Sprintf("SSH login successful with %s:%s - %s [CREDS:%s:%s]", username, password, message, username, password)
 		}
 
